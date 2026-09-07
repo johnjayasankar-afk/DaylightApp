@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daylight — adaptive display lighting for macOS</title>
+<meta name="description" content="A macOS menu bar utility that shifts your display's warmth and brightness on a schedule you control. Works offline. No account, no network requests, no location permission.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0e0f13">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Daylight — adaptive display lighting for macOS">
+<meta property="og:description" content="Shifts your display's warmth and brightness on a schedule you control. Offline, private, and honest about what it does.">
+<meta property="og:image" content="assets/icon-1024.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32">
+<link rel="icon" href="assets/favicon-64.png" sizes="64x64">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <img src="assets/favicon-64.png" srcset="assets/favicon-64.png 1x, assets/icon-256.png 4x"
+           width="28" height="28" alt="" aria-hidden="true">
+      <span>Daylight</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#detail">Details</a>
+      <a href="#honest">What it doesn't claim</a>
+      <a class="nav-cta" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ================= Hero ================= -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <div class="hero-head">
+        <img class="hero-icon" src="assets/icon-512.png" width="112" height="112"
+             alt="The Daylight app icon: a sun on a horizon beneath a sky that cools as it rises.">
+        <h1>Your screen, through the day.</h1>
+        <p class="lede">
+          Daylight shifts your display's warmth and brightness on a schedule you
+          set — gradually, predictably, and out of the way. It lives in the menu
+          bar, works entirely offline, and tells you exactly what it is doing
+          and why.
+        </p>
+
+        <div class="cta-row">
+          <a class="button primary" href="#download">
+            Download for macOS
+            <span class="button-sub">Version 1.0.0 · 2.0 MB · Apple Silicon &amp; Intel</span>
+          </a>
+          <a class="button ghost" href="#source">Build from source</a>
+        </div>
+        <p class="cta-note">
+          Requires macOS 14 or later. Not yet notarised — <a href="#gatekeeper">one extra step on first launch</a>.
+        </p>
+      </div>
+
+      <!-- The demonstration. Same schedule maths as the app. -->
+      <figure class="hero-demo" data-reveal>
+        <figcaption class="demo-head">
+          <div>
+            <span class="demo-title">A day on the Balanced schedule</span>
+            <span class="demo-sub">The preset Daylight ships with. Drag to move through the day.</span>
+          </div>
+          <div class="readout" role="status" aria-live="polite">
+            <span class="read-time" id="read-time">—</span>
+            <span class="read-sep" aria-hidden="true">·</span>
+            <span class="read-name" id="read-name">—</span>
+            <span class="read-sep" aria-hidden="true">·</span>
+            <span class="read-value" id="read-kelvin">—</span>
+            <span class="read-sep" aria-hidden="true">·</span>
+            <span class="read-value" id="read-brightness">—</span>
+          </div>
+        </figcaption>
+
+        <svg id="curve" viewBox="0 0 1000 260" preserveAspectRatio="none"
+             role="img" aria-label="A 24-hour curve of display warmth. It holds a neutral 6500 kelvin through the day, falls through the evening to 4200 kelvin at 7 PM, then 3200 kelvin at 9:30 PM, and reaches 2800 kelvin at 11:30 PM overnight."></svg>
+
+        <div class="scrub-row">
+          <label class="visually-hidden" for="scrub">Time of day</label>
+          <input id="scrub" type="range" min="0" max="1439" step="1" value="720"
+                 aria-valuetext="Loading">
+          <button id="scrub-now" class="button tiny" type="button" hidden>Back to now</button>
+        </div>
+        <p class="demo-foot">
+          This page is running the same schedule evaluation and colour maths the
+          app uses, over the same preset. It starts wherever you are in your own
+          day.
+        </p>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= Screenshot ================= -->
+  <section class="shot-section" data-reveal>
+    <div class="wrap">
+      <div class="window-frame">
+        <div class="window-bar" aria-hidden="true">
+          <span class="dot red"></span><span class="dot amber"></span><span class="dot green"></span>
+        </div>
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="assets/shots/window-today-light.png">
+          <img src="assets/shots/window-today-dark.png" width="1600" height="1120" loading="lazy"
+               alt="Daylight's Today view: a large reading of 4200 K described as slightly warm, a sentence explaining that the display is following the Balanced schedule, and a 24-hour timeline showing warmth and brightness curves with the current time marked.">
+        </picture>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= How it works ================= -->
+  <section id="how" class="section" data-reveal>
+    <div class="wrap">
+      <h2>It tells you what it is doing</h2>
+      <p class="section-lede">
+        Most of the work in Daylight went into being explainable. Every state has
+        a sentence attached, in plain language, naming whatever is responsible
+        for it.
+      </p>
+
+      <div class="quote-grid">
+        <blockquote><p>Your display is slightly warm, following Balanced.</p></blockquote>
+        <blockquote><p>Your display is neutral because “Colour Work” is active for this app.</p></blockquote>
+        <blockquote><p>Reading until 10:30 PM. Your schedule resumes afterwards.</p></blockquote>
+        <blockquote class="warn"><p>Another display utility is competing for Studio Display.</p></blockquote>
+      </div>
+
+      <div class="how-grid">
+        <article>
+          <h3>A precedence you can see</h3>
+          <p>
+            Warmth and brightness are resolved separately, so a rule that dims on
+            battery does not quietly discard your schedule's warmth. Where two
+            things set the same control, a fixed ladder decides — and the ladder
+            is printed in the app, with the active layer marked.
+          </p>
+        </article>
+        <article>
+          <h3>Three levels of certainty</h3>
+          <p>
+            Daylight distinguishes what it <em>asked</em> for, what macOS
+            <em>accepted</em>, and what it could <em>read back and confirm</em>.
+            Each display reports which of the three applies. An API returning
+            success is not evidence that anything changed, and the app does not
+            treat it as such.
+          </p>
+        </article>
+        <article>
+          <h3>It notices the competition</h3>
+          <p>
+            f.lux, Night Shift and similar tools write to the same colour table.
+            Daylight reads back after every write, and when something else has
+            overwritten it, it says so rather than silently losing. It will not
+            fight another app, and will not disable one behind your back.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Details ================= -->
+  <section id="detail" class="section alt" data-reveal>
+    <div class="wrap">
+      <h2>The details that took the longest</h2>
+      <div class="feature-grid">
+        <article><h3>Schedules that survive real life</h3><p>Daylight-saving changes, time-zone moves, clocks corrected by hand, schedules that cross midnight, night shifts, non-Western weeks, polar day and polar night. Anchors follow the clock; fades follow elapsed time. Getting that backwards put the whole schedule an hour out on a 23-hour day — a test now pins it.</p></article>
+        <article><h3>Sunrise without a permission prompt</h3><p>Solar times are computed on your Mac from a place you choose — 101 cities built in, or coordinates. Daylight can suggest a starting point from your time zone, which is a setting rather than a position. It never asks macOS where you are and makes no network requests.</p></article>
+        <article><h3>Displays remembered properly</h3><p>Settings key to a durable identity, never a display index — indices are reassigned on every dock and wake. Two identical monitors that genuinely cannot be told apart are reported as ambiguous instead of guessed at.</p></article>
+        <article><h3>Fades paced by perception</h3><p>Interpolation runs in mired rather than kelvin, because 2000→3000 K is a large visible change and 8000→9000 K is nearly invisible. The write rate is derived from how much the value actually moves, so a 90-minute ramp writes about once a minute instead of once a frame.</p></article>
+        <article><h3>It refuses a suspicious baseline</h3><p>Before adjusting anything, Daylight captures what "normal" means for a display — and validates it. When f.lux was running during development the table read back as R 1.00 / G 0.36 / B 0.10; adopting that as neutral would have baked another app's tint in permanently. There is a test pinned to those exact numbers.</p></article>
+        <article><h3>Getting out of the way</h3><p>⇧⌥⌘R restores normal output from anywhere, with no permissions required. Quitting restores your displays. If the app is force quit or crashes, macOS restores the colour table itself — verified under <code>SIGKILL</code>, which is why Daylight ships no watchdog helper.</p></article>
+      </div>
+
+      <div class="shot-pair">
+        <figure>
+          <img src="assets/shots/window-schedule-dark.png" width="1600" height="1120" loading="lazy"
+               alt="The Schedule view: a draggable 24-hour timeline above a list of anchors, each with editable time, warmth, brightness and fade duration.">
+          <figcaption>Drag the timeline, or type exact numbers. Anchors are keyboard-operable — arrow keys move them by five minutes.</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/shots/window-displays-dark.png" width="1600" height="1120" loading="lazy"
+               alt="The Displays view, listing each display with its warmth, dimming, colour control support, hardware brightness availability and the confidence level of the last change.">
+          <figcaption>Every display reports what it actually supports, and how confident Daylight is that the last change took effect.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Menu bar ================= -->
+  <section class="section menubar-section" data-reveal>
+    <div class="wrap menubar-wrap">
+      <div class="menubar-copy">
+        <h2>Most days, you never open the window</h2>
+        <p class="section-lede">
+          The menu bar is where the app actually lives. Warmth and brightness,
+          every mode, a pause with a duration, and a restore — all one click
+          from the icon. On a Mac with more than one display, a selector decides
+          which of them a change applies to.
+        </p>
+        <p class="menubar-note">
+          The icon itself fills in proportion to how warm the current setting
+          is, and shows paused and off as distinct shapes rather than as
+          colours — so it reads at a glance, and reads at all if you cannot
+          distinguish them.
+        </p>
+      </div>
+      <figure class="menubar-shot">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="assets/shots/menubar-light.png">
+          <img src="assets/shots/menubar-dark.png" width="648" height="1180" loading="lazy"
+               alt="Daylight's menu bar panel: the current state and what changes next, sliders for warmth and brightness, a note that brightness is software dimming, a duration selector, a grid of modes, and buttons to pause, restore, open the app and quit.">
+        </picture>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= Honesty ================= -->
+  <section id="honest" class="section" data-reveal>
+    <div class="wrap narrow">
+      <h2>What it doesn't claim</h2>
+      <p class="section-lede">
+        This is a comfort and routine tool. It is not a medical one, and the
+        wording throughout the app is careful about the difference.
+      </p>
+      <ul class="claims">
+        <li>It does not prevent eye damage, treat eye strain, or improve your sleep.</li>
+        <li>There are no invented "circadian", "eye health" or "melatonin" scores. There is no score of any kind.</li>
+        <li>Temperature values are approximate display targets, not measurements of emitted light.</li>
+        <li>What it calls brightness is <strong>software dimming</strong> — it lowers the values sent to the panel. It is not backlight control, and macOS gives applications no public way to change a backlight. The app says so wherever the word appears.</li>
+        <li>It does not calibrate your display or make its colour accurate, including in Colour Work mode.</li>
+        <li>Visual comfort depends on more than colour: brightness, glare, text size, distance, how long you have been working, and the light in the room all matter too.</li>
+      </ul>
+      <p class="footnote">
+        For something evidence-based on sleep habits, the
+        <a href="https://www.nhlbi.nih.gov/health/sleep-deprivation/healthy-sleep-habits" rel="noopener">US National Heart, Lung, and Blood Institute</a>
+        is a reasonable place to start.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= Privacy ================= -->
+  <section class="section alt" data-reveal>
+    <div class="wrap narrow">
+      <h2>It stays on your Mac</h2>
+      <div class="privacy-grid">
+        <div><span class="tick" aria-hidden="true">—</span> No account</div>
+        <div><span class="tick" aria-hidden="true">—</span> No network requests, ever</div>
+        <div><span class="tick" aria-hidden="true">—</span> No location permission</div>
+        <div><span class="tick" aria-hidden="true">—</span> No analytics or telemetry</div>
+        <div><span class="tick" aria-hidden="true">—</span> No screen contents or keystrokes</div>
+        <div><span class="tick" aria-hidden="true">—</span> No camera, ever</div>
+      </div>
+      <p>
+        Settings live in one readable file you can export, import, or delete.
+        History is off by default, and switching it off deletes what was kept.
+        If you turn on app rules, Daylight reads the identifier of the frontmost
+        application while deciding what to do and keeps no record of it.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= Download ================= -->
+  <section id="download" class="section download" data-reveal>
+    <div class="wrap narrow">
+      <h2>Download</h2>
+
+      <div class="download-card">
+        <div class="download-main">
+          <img src="assets/icon-256.png" width="72" height="72" alt="" aria-hidden="true">
+          <div>
+            <h3>Daylight 1.0.0</h3>
+            <p class="meta">macOS 14 or later · Apple Silicon &amp; Intel · 2.0 MB</p>
+          </div>
+          <a class="button primary" href="downloads/Daylight-1.0.0.zip" download>Download</a>
+        </div>
+        <p class="checksum">
+          SHA-256 <code>81733980f958f0eb40a134e25323af769ad1b32d3e7400b9e8f8fab6ecebe92e</code>
+        </p>
+      </div>
+
+      <div class="callout" id="gatekeeper">
+        <h3>First launch takes one extra step</h3>
+        <p>
+          Daylight is signed, but <strong>not notarised by Apple</strong> — that
+          needs a paid Developer ID, and this build does not have one. macOS will
+          refuse to open it on the first attempt. That is Gatekeeper doing its
+          job, and you should be sceptical of any download that asks you to work
+          around it.
+        </p>
+        <p>Two honest options:</p>
+        <ol>
+          <li>
+            <strong>Open it once from the Finder.</strong> Unzip, then
+            right-click <em>Daylight.app</em> → <em>Open</em> → <em>Open</em>.
+            macOS remembers the decision. If it refuses outright, remove the
+            download quarantine flag first:
+            <div class="code-row">
+              <code id="cmd-quarantine">xattr -d com.apple.quarantine ~/Downloads/Daylight.app</code>
+              <button class="button tiny" type="button" data-copy="cmd-quarantine">Copy</button>
+            </div>
+          </li>
+          <li>
+            <strong>Build it yourself</strong> from the source below, which
+            sidesteps the question entirely — it is one command and needs no
+            Xcode.
+          </li>
+        </ol>
+      </div>
+
+      <div class="source-card" id="source">
+        <h3>Build from source</h3>
+        <p>
+          No Xcode required — Command Line Tools is enough. There are no
+          third-party dependencies to fetch.
+        </p>
+        <div class="code-row">
+          <code id="cmd-build">./Scripts/build-app.sh release &amp;&amp; open build/Daylight.app</code>
+          <button class="button tiny" type="button" data-copy="cmd-build">Copy</button>
+        </div>
+        <p class="meta">
+          <a href="downloads/Daylight-1.0.0-source.zip" download>Download the source (209 KB)</a>
+          — 263 tests included. Run them with
+          <code>swift build &amp;&amp; ./.build/out/Products/Debug/daylight-tests</code>.
+        </p>
+      </div>
+
+      <div class="callout muted">
+        <h3>Two things that are not finished</h3>
+        <p>
+          <strong>Multi-display behaviour has never run on real hardware.</strong>
+          Every path is written and covered against simulated devices, but only
+          one display was ever attached during development. Run
+          <code>Daylight --diagnose</code> to see what your own displays report.
+        </p>
+        <p>
+          <strong>External-monitor backlight control over DDC has never
+          exchanged a byte with a monitor.</strong> Its packet framing is
+          unit-tested; the hardware path is unproven. It is off by default.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <p class="platform-note" data-mac-only hidden>
+    Daylight is a macOS application. It will not run on this device.
+  </p>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div>
+      <span class="brand-small">Daylight</span>
+      <p class="meta">Adaptive display lighting for macOS. Built with no third-party dependencies.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="downloads/Daylight-1.0.0.zip" download>Download</a>
+      <a href="downloads/Daylight-1.0.0-source.zip" download>Source</a>
+      <a href="#honest">What it doesn't claim</a>
+    </nav>
+  </div>
+  <div class="wrap footer-legal">
+    <p>
+      Independent software. Contains no f.lux code, branding or assets — the
+      overlap is in the problem, not the solution. Solar position follows the
+      published NOAA algorithm; the colour-temperature approximation follows
+      Kim et al. (2002). Both implemented from their descriptions.
+    </p>
+    <p>© <span id="year">2026</span> · No licence has been chosen yet, so default copyright applies.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

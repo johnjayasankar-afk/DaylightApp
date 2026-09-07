@@ -1,121 +1,82 @@
-# Daylight
+# Daylight — landing page
 
-Daylight is a macOS menu-bar utility that adjusts display warmth — and hardware brightness where the system allows — according to a schedule you control.
+A static marketing and download page for [Daylight](https://github.com/), the
+macOS adaptive display-lighting app.
 
-It is a lighting-comfort and routine-support tool. It does **not** treat eye strain, measure melatonin, know your circadian phase, or replace daylight, breaks, or medical care. Temperature values are approximate display targets, not spectral measurements.
+No framework, no build step, no dependencies. Three files and some images.
 
-> Adjust your display to your preferences. Use gentler evening settings. Build a consistent wind-down routine.
+## Deploy to Vercel
 
-## Platform
+**From the dashboard:** create a new project, drag this folder in, and deploy.
+There is nothing to configure — Vercel serves it as a static site.
 
-Primary platform: **macOS 14+** on Apple silicon and Intel. This repository implements a native Swift / AppKit app. Scheduling logic is platform-independent so Windows or Linux adapters can be added later without rewriting the engine.
-
-## Requirements
-
-- macOS 14 or later
-- Swift 6 command-line tools (`xcode-select --install` is enough; full Xcode is not required)
-- No account, network service, or location permission for the core app
-
-## Build and run
+**From the CLI:**
 
 ```bash
-cd daylight
-make test
-make app
-make run
+npm i -g vercel
+vercel        # preview
+vercel --prod # production
 ```
 
-Or step by step:
+**From GitHub:** push this folder to a repository and import it in Vercel. If
+it lives in a subdirectory of a larger repo, set *Root Directory* to that
+subdirectory in the project settings.
 
-```bash
-swift build --disable-sandbox --cache-path .build/spm-cache --product DaylightChecks
-.build/debug/DaylightChecks
-swift build --disable-sandbox --cache-path .build/spm-cache -c release --product Daylight
-./Scripts/package-app.sh
-open dist/Daylight.app
+Leave the build command and output directory empty. There is no build.
+
+## What's here
+
+```
+index.html      the page
+styles.css      design tokens and layout, dark-first with a light scheme
+app.js          the interactive day curve
+vercel.json     security headers and cache policy
+assets/         icon, screenshots
+downloads/      the app build and the source archive
 ```
 
-The packaged app lives at `dist/Daylight.app`. It is **not signed or notarized**. To keep Gatekeeper quiet for local use:
+## The curve is not a mock-up
 
-```bash
-xattr -dr com.apple.quarantine dist/Daylight.app
-```
+`app.js` contains a port of the app's own schedule evaluation and
+colour-temperature maths, running the same "Balanced" preset the app ships
+with. Values were diffed against the Swift engine across fifteen times of day,
+including mid-fade points, and match exactly.
 
-To sign and notarize later, use your Developer ID certificate and `notarytool`. Those steps are not claimed as done here.
+If the app's presets or interpolation change, `ANCHORS` and the colour helpers
+in `app.js` need to change with them, or the page starts telling a story the
+app no longer performs.
 
-## Prove display control
+## Updating the download
 
-This is the first thing to run on a new machine:
+1. Build the app: `./Scripts/build-app.sh release` in the Daylight repo.
+2. Zip the *verifiable* copy — on a synced folder (iCloud Drive, Dropbox) the
+   one under `build/` cannot carry a valid signature:
+   ```bash
+   ditto -c -k --keepParent ~/Library/Caches/Daylight/Daylight.app \
+     downloads/Daylight-1.0.0.zip
+   ```
+3. Update the version, size and SHA-256 in `index.html`:
+   ```bash
+   shasum -a 256 downloads/Daylight-1.0.0.zip
+   ```
 
-```bash
-make probe
-```
+## Accessibility and browser support
 
-The probe:
+Checked, not assumed:
 
-1. Lists connected displays and their detected capabilities
-2. Applies a conservative 4200 K transfer-table adjustment
-3. Holds for a few seconds
-4. Restores the previous table
+- Every piece of text meets WCAG AA contrast in both colour schemes — measured
+  across 100 text nodes, lowest ratio 6.34 dark and 5.10 light.
+- No horizontal overflow at 320, 375, 390, 768, 1024 or 1440 px.
+- One `h1`, no heading-level skips, every interactive element has an
+  accessible name, every image has alt text.
+- The curve has a text description, and the scrubber is a real
+  `input[type=range]` with a live `aria-valuetext`, so it works from the
+  keyboard and reads correctly in a screen reader.
+- Section reveals are an enhancement: the hidden state is only applied once
+  scripting has confirmed it can remove it again, with a timer and a
+  `visibilitychange` handler as failsafes. A blocked or broken script leaves
+  the page fully readable rather than blank.
+- `prefers-reduced-motion` disables the reveals and smooth scrolling.
 
-It reports four evidence classes separately: requested state, API acceptance, readback, and visual confirmation. Visual confirmation is never inferred from an API result.
-
-If you need to undo an adjustment immediately:
-
-```bash
-make restore
-```
-
-## Everyday use
-
-1. Open Daylight from the menu bar sun icon.
-2. Finish the short setup, or skip ahead — defaults are usable.
-3. Edit the daily timeline on **Today** or **Schedule**. Drag a time to move it, double-click to add one, and hold Shift for one-minute precision. Settings can set how long every time takes to arrive; Schedule can still refine a single time.
-4. Use **Reading**, **Focus**, **Wind Down**, or **Color Work** as temporary modes.
-5. Close the window; automation continues if that preference is enabled.
-6. **Restore** or **Quit** removes Daylight’s transfer-table adjustments.
-
-A manual slider change is a temporary override with an expiration. It does not rewrite the saved schedule. Linking groups every active display so that override applies to all of them.
-
-- Option-click the menu bar icon to restore output immediately.
-- Settings can hide the menu-bar temperature if you want a quieter extra.
-- Right-click the icon for Pause, Resume, Restore, and Quit.
-- Emergency restore: **⌥⇧⌘R**.
-
-## Scheduling
-
-- **Personal** — wake, wind-down, bedtime, overnight
-- **Solar** — sunrise and sunset from a typed city or coordinates (no location permission)
-- **Custom** — named anchors
-- **Hybrid** — solar events plus your routine. If a personal or custom time falls within 20 minutes of a solar event, the personal time is used and the solar event is skipped.
-
-A separate weekend schedule uses that day’s times. Overnight still belongs to the day that just ended: Saturday 1 AM holds Friday’s weekday night until Saturday morning, and Monday 1 AM holds Sunday’s weekend night until Monday’s wake.
-
-After sleep or wake, Daylight recomputes the current desired state. It does not replay missed transitions.
-
-## What is implemented
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the precise checklist (implemented, tested, experimental, blocked, planned).
-
-Release 1 includes warmth control, the scheduling engine, menu-bar controls, per-display settings, overrides, onboarding, and local persistence.
-
-Not in this release: application rules, ambient-light sensors, desk/RGB lights, accounts, or analytics.
-
-## Privacy
-
-Settings live in `~/Library/Application Support/Daylight/`. There is no telemetry. History is off by default. Exports do not include integration secrets because none are stored.
-
-## Uninstall
-
-1. Quit Daylight (this restores its display adjustments).
-2. Delete `Daylight.app`.
-3. Optionally delete `~/Library/Application Support/Daylight`.
-4. If you enabled launch at login, turn that off in Daylight first, or remove the login item in System Settings.
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [Compatibility](docs/COMPATIBILITY.md)
-- [Test results](docs/TEST_RESULTS.md)
-- [Release checklist](docs/RELEASE_CHECKLIST.md)
-- [Roadmap](docs/ROADMAP.md)
+`vercel.json` sets a strict Content-Security-Policy with no `'unsafe-inline'`,
+which is why there is no inline `<style>` or `<script>` anywhere in the markup.

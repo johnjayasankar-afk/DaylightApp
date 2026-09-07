@@ -1,0 +1,445 @@
+/*
+ * Daylight — landing page.
+ *
+ * The palette, spacing and type are carried over from the application itself:
+ * neutral surfaces, one warm accent used sparingly, restrained borders, no
+ * glass and no gradients for their own sake. Dark first, because that is the
+ * half of the day the app is for.
+ */
+
+/* ---------------------------------------------------------------- tokens */
+
+:root {
+  --bg:            #0e0f13;
+  --bg-alt:        #121319;
+  --surface:       #16181f;
+  --surface-2:     #1b1e26;
+  --hairline:      rgba(255, 255, 255, 0.09);
+  --hairline-firm: rgba(255, 255, 255, 0.16);
+
+  --text:          #f2f3f5;
+  --text-2:        #bcc1cb;
+  --text-3:        #949ba7;
+
+  --accent:        #e0913f;          /* accent as text or a line */
+  --accent-fill:   #e0913f;          /* accent as a filled background */
+  --accent-on-fill:#17120b;          /* text sitting on that fill */
+  --accent-soft:   rgba(224, 145, 63, 0.14);
+  --accent-line:   rgba(224, 145, 63, 0.42);
+  /* The scrubbed moment, adjusted so it stays readable as text. */
+  --moment-text:   var(--moment);
+  --warn:          #e2a03f;
+
+  --radius:     14px;
+  --radius-sm:  9px;
+  --wrap:       1120px;
+  --wrap-narrow: 760px;
+
+  /* Set from JS as the hero curve is scrubbed. */
+  --moment:       #9ebde0;
+  --moment-soft:  rgba(158, 189, 224, 0.13);
+  --moment-faint: rgba(158, 189, 224, 0.05);
+
+  --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:            #fbfbfc;
+    --bg-alt:        #f4f4f6;
+    --surface:       #ffffff;
+    --surface-2:     #f7f7f9;
+    --hairline:      rgba(0, 0, 0, 0.10);
+    --hairline-firm: rgba(0, 0, 0, 0.18);
+    --text:          #14161a;
+    --text-2:        #4c525c;
+    --text-3:        #626873;
+    --accent:        #8a4f0e;
+    --accent-fill:   #8a4f0e;
+    --accent-on-fill:#ffffff;
+    --accent-soft:   rgba(138, 79, 14, 0.10);
+    --accent-line:   rgba(138, 79, 14, 0.36);
+    /* A pale sky blue is unreadable as text on a light page, so the moment
+       colour is pulled towards the text colour before being used for type.
+       The marker and dot keep the true colour — they are graphics, not text. */
+    --moment-text:   color-mix(in srgb, var(--moment) 42%, #14161a);
+    --warn:          #9a6a12;
+  }
+}
+
+/* ---------------------------------------------------------------- base */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+body {
+  margin: 0;
+  /* Nothing should ever push the page sideways. */
+  overflow-x: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { line-height: 1.18; letter-spacing: -0.02em; margin: 0; font-weight: 600; }
+h1 { font-size: clamp(2.1rem, 5.2vw, 3.6rem); letter-spacing: -0.032em; }
+h2 { font-size: clamp(1.55rem, 3.2vw, 2.15rem); }
+h3 { font-size: 1.02rem; letter-spacing: -0.012em; }
+p  { margin: 0; }
+
+a { color: inherit; text-decoration-color: var(--hairline-firm); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--accent); }
+
+code { font-family: var(--mono); font-size: 0.86em; overflow-wrap: anywhere; }
+p, li, figcaption, blockquote { overflow-wrap: break-word; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.wrap { width: 100%; max-width: var(--wrap); margin-inline: auto; padding-inline: 24px; }
+@media (max-width: 480px) { .wrap { padding-inline: 18px; } }
+.wrap.narrow { max-width: var(--wrap-narrow); }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.skip {
+  position: absolute; left: -999px; top: 0; z-index: 100;
+  background: var(--surface); padding: 12px 18px; border-radius: 0 0 var(--radius-sm) 0;
+}
+.skip:focus { left: 0; }
+
+/* The interactive curve is the one part that genuinely needs scripting.
+   `no-js` is on <html> in the markup and removed by app.js on its first line,
+   so it hides only when scripting really is unavailable. Done with a class
+   rather than an inline <noscript><style>, which keeps the page's
+   Content-Security-Policy free of 'unsafe-inline'. */
+.no-js .hero-demo { display: none; }
+
+/* Revealing is an enhancement, never a precondition for reading the page.
+   The hidden state is scoped to a class that JS adds only once it is certain
+   it can take the elements back out again — so a script error, a blocked
+   script or a missing IntersectionObserver leaves everything visible rather
+   than hiding the entire page below the fold. */
+.js-reveal [data-reveal] {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity .6s ease, transform .6s ease;
+}
+.js-reveal [data-reveal].is-visible { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .js-reveal [data-reveal] { opacity: 1; transform: none; transition: none; }
+}
+
+/* ---------------------------------------------------------------- nav */
+
+.nav {
+  position: sticky; top: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid var(--hairline);
+}
+.nav-inner {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 58px; gap: 12px; flex-wrap: nowrap;
+}
+.brand {
+  display: inline-flex; align-items: center; gap: 9px; font-weight: 600;
+  text-decoration: none; letter-spacing: -0.015em; min-width: 0; flex-shrink: 0;
+}
+.brand img { border-radius: 6px; }
+.nav nav {
+  display: flex; align-items: center; gap: 22px; font-size: 0.87rem;
+  color: var(--text-2); min-width: 0; flex-shrink: 1;
+}
+.nav nav a { text-decoration: none; }
+.nav nav a:hover { color: var(--text); }
+.nav-cta {
+  padding: 6px 13px; border-radius: 100px; border: 1px solid var(--accent-line);
+  color: var(--accent) !important; font-weight: 500;
+}
+.nav-cta:hover { background: var(--accent-soft); }
+@media (max-width: 720px) {
+  .nav nav a:not(.nav-cta) { display: none; }
+  .nav nav { gap: 12px; }
+}
+
+/* ---------------------------------------------------------------- hero */
+
+.hero { padding: clamp(48px, 9vw, 104px) 0 clamp(28px, 5vw, 56px); }
+.hero-head { max-width: 720px; }
+.hero-icon {
+  border-radius: 24px; margin-bottom: 26px; display: block;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+}
+.lede { margin-top: 20px; font-size: clamp(1.02rem, 2vw, 1.16rem); color: var(--text-2); max-width: 60ch; }
+
+.cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; align-items: stretch; }
+.cta-note { margin-top: 14px; font-size: 0.84rem; color: var(--text-3); }
+.cta-note a { color: var(--text-2); }
+
+.button {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; padding: 12px 22px; border-radius: var(--radius-sm);
+  font-size: 0.94rem; font-weight: 500; text-decoration: none;
+  border: 1px solid transparent; cursor: pointer; transition: transform .16s ease, background .16s ease;
+}
+.button:hover { transform: translateY(-1px); }
+.button:active { transform: none; }
+.button.primary { background: var(--accent-fill); color: var(--accent-on-fill); }
+.button.primary:hover { background: color-mix(in srgb, var(--accent-fill) 86%, var(--text)); }
+.button.ghost { border-color: var(--hairline-firm); color: var(--text); }
+.button.ghost:hover { background: var(--surface); }
+.button-sub { font-size: 0.72rem; font-weight: 400; opacity: 0.72; letter-spacing: 0.01em; }
+.button.tiny {
+  flex-direction: row; padding: 5px 11px; font-size: 0.78rem;
+  border-color: var(--hairline-firm); background: transparent; color: var(--text-2);
+}
+.button.tiny:hover { background: var(--surface-2); color: var(--text); }
+.button.tiny.is-done { color: var(--accent); border-color: var(--accent-line); }
+
+/* ------------------------------------------------------------ hero demo */
+
+.hero-demo {
+  /* --moment is set from JS here, so --moment-text has to be re-derived in
+     the same scope or it would keep the page-level default. */
+  --moment-text: var(--moment);
+  margin: clamp(36px, 6vw, 64px) 0 0; padding: 20px 20px 16px;
+  max-width: 100%; min-width: 0; overflow: hidden;
+  background: linear-gradient(180deg, var(--moment-faint), transparent 60%), var(--surface);
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  transition: background .55s ease;
+}
+.demo-head {
+  display: flex; flex-wrap: wrap; gap: 12px 20px;
+  align-items: baseline; justify-content: space-between; margin-bottom: 14px;
+  min-width: 0;
+}
+.demo-head > div { min-width: 0; }
+.demo-title { display: block; font-weight: 600; font-size: 0.95rem; }
+.demo-sub { display: block; font-size: 0.8rem; color: var(--text-3); margin-top: 2px; }
+
+.readout {
+  display: inline-flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 6px 12px; border-radius: 100px;
+  background: var(--moment-soft); border: 1px solid var(--hairline);
+  font-variant-numeric: tabular-nums; font-size: 0.86rem;
+  transition: background .55s ease;
+}
+.read-time { font-weight: 600; color: var(--moment-text); transition: color .55s ease; }
+.read-name { color: var(--text); }
+.read-value { color: var(--text-2); }
+.read-sep { color: var(--text-3); }
+
+#curve { display: block; width: 100%; height: clamp(180px, 26vw, 260px); overflow: visible; }
+.curve-line { fill: none; stroke: var(--text); stroke-opacity: 0.5; stroke-width: 1.6; }
+.curve-tick { stroke: var(--hairline-firm); stroke-width: 1; }
+.curve-label { fill: var(--text-3); font-size: 11px; font-family: var(--font); }
+.curve-anchor { stroke: var(--text); stroke-opacity: 0.14; stroke-width: 1; stroke-dasharray: 3 4; }
+.curve-marker { stroke: var(--moment); stroke-width: 2; transition: stroke .55s ease; }
+.curve-marker-dot { fill: var(--moment); transition: fill .55s ease; }
+
+.scrub-row { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+#scrub {
+  flex: 1; appearance: none; height: 22px; background: transparent; cursor: grab;
+}
+#scrub:active { cursor: grabbing; }
+#scrub::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, #9ebde0 0%, #9ebde0 28%, #c39a6e 62%, #f08c3d 100%);
+}
+#scrub::-webkit-slider-thumb {
+  appearance: none; width: 16px; height: 16px; margin-top: -6px;
+  border-radius: 50%; background: #fff; border: 1px solid rgba(0,0,0,0.28);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+#scrub::-moz-range-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, #9ebde0 0%, #9ebde0 28%, #c39a6e 62%, #f08c3d 100%);
+}
+#scrub::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%; background: #fff;
+  border: 1px solid rgba(0,0,0,0.28);
+}
+.demo-foot { margin-top: 10px; font-size: 0.78rem; color: var(--text-3); max-width: 62ch; }
+
+/* ---------------------------------------------------------------- shots */
+
+.shot-section { padding: clamp(28px, 5vw, 56px) 0; }
+.window-frame {
+  border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+.window-bar {
+  display: flex; align-items: center; gap: 7px; padding: 10px 14px;
+  background: var(--surface-2); border-bottom: 1px solid var(--hairline);
+}
+.dot { width: 11px; height: 11px; border-radius: 50%; display: block; }
+.dot.red { background: #ff5f57; } .dot.amber { background: #febc2e; } .dot.green { background: #28c840; }
+.window-frame img { display: block; width: 100%; height: auto; }
+
+/* ---------------------------------------------------------------- sections */
+
+.section { padding: clamp(52px, 8vw, 96px) 0; }
+.section.alt { background: var(--bg-alt); border-block: 1px solid var(--hairline); }
+.section-lede { margin-top: 14px; color: var(--text-2); max-width: 62ch; font-size: 1.02rem; }
+
+.quote-grid {
+  display: grid; gap: 12px; margin-top: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(min(268px, 100%), 1fr));
+}
+blockquote {
+  margin: 0; padding: 16px 18px; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-left: 2px solid var(--accent-line);
+  font-size: 0.95rem; color: var(--text);
+}
+blockquote.warn { border-left-color: var(--warn); color: var(--text-2); }
+
+.how-grid, .feature-grid {
+  display: grid; gap: 22px; margin-top: 40px;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+}
+.how-grid p, .feature-grid p { margin-top: 8px; color: var(--text-2); font-size: 0.93rem; }
+.feature-grid article {
+  padding: 20px; background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+.shot-pair {
+  display: grid; gap: 22px; margin-top: 44px;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+}
+.shot-pair figure { margin: 0; min-width: 0; }
+.shot-pair img {
+  width: 100%; height: auto; display: block; border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline); box-shadow: 0 14px 36px rgba(0,0,0,0.28);
+}
+.shot-pair figcaption { margin-top: 10px; font-size: 0.84rem; color: var(--text-3); }
+
+.menubar-wrap {
+  display: grid; gap: clamp(28px, 5vw, 56px); align-items: center;
+  grid-template-columns: minmax(min(320px, 100%), 1fr) minmax(min(240px, 100%), 300px);
+}
+@media (max-width: 780px) { .menubar-wrap { grid-template-columns: 1fr; } }
+.menubar-copy { min-width: 0; }
+.menubar-note { margin-top: 16px; font-size: 0.9rem; color: var(--text-2); }
+.menubar-shot { margin: 0; min-width: 0; justify-self: center; }
+.menubar-shot img {
+  width: 100%; max-width: 300px; height: auto; display: block;
+  border-radius: var(--radius); border: 1px solid var(--hairline);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.38);
+}
+
+.claims { margin: 28px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.claims li {
+  padding-left: 22px; position: relative; color: var(--text-2); font-size: 0.96rem;
+}
+.claims li::before {
+  content: "—"; position: absolute; left: 0; color: var(--text-3);
+}
+.claims strong { color: var(--text); font-weight: 600; }
+.footnote { margin-top: 24px; font-size: 0.85rem; color: var(--text-3); }
+
+.privacy-grid {
+  display: grid; gap: 10px 26px; margin: 26px 0 24px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  font-size: 0.95rem; color: var(--text-2);
+}
+.tick { color: var(--text-3); margin-right: 8px; }
+.privacy-grid + p { color: var(--text-2); font-size: 0.93rem; }
+
+/* ---------------------------------------------------------------- download */
+
+.download-card {
+  margin-top: 30px; padding: 22px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--hairline);
+}
+.download-main { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; min-width: 0; }
+.download-main img { border-radius: 16px; }
+.download-main > div { flex: 1; min-width: 180px; }
+.download-main .meta { font-size: 0.84rem; color: var(--text-3); margin-top: 3px; }
+.checksum {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline);
+  font-size: 0.74rem; color: var(--text-3);
+  overflow-wrap: anywhere; word-break: break-word;
+}
+
+.callout {
+  margin-top: 22px; padding: 20px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-left: 2px solid var(--warn);
+}
+.callout.muted { border-left-color: var(--hairline-firm); }
+.callout p, .callout li { color: var(--text-2); font-size: 0.93rem; margin-top: 10px; }
+.callout ol { margin: 12px 0 0; padding-left: 20px; }
+.callout li { margin-top: 12px; }
+.callout strong { color: var(--text); }
+
+.code-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  padding: 9px 12px; border-radius: var(--radius-sm);
+  background: var(--bg); border: 1px solid var(--hairline);
+  max-width: 100%; min-width: 0;
+}
+/* The command scrolls inside its own box rather than widening the page. */
+.code-row code {
+  flex: 1 1 auto; min-width: 0; white-space: nowrap; color: var(--text);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.code-row .button { flex: 0 0 auto; }
+
+.source-card {
+  margin-top: 22px; padding: 20px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--hairline);
+}
+.source-card p { color: var(--text-2); font-size: 0.93rem; margin-top: 8px; }
+.source-card .meta { font-size: 0.84rem; color: var(--text-3); margin-top: 14px; }
+
+.platform-note {
+  margin: 0; padding: 14px 24px; text-align: center;
+  background: var(--accent-soft); color: var(--text-2); font-size: 0.88rem;
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.footer { border-top: 1px solid var(--hairline); padding: 44px 0 56px; background: var(--bg-alt); }
+.footer-inner { display: flex; justify-content: space-between; gap: 26px; flex-wrap: wrap; }
+.brand-small { font-weight: 600; letter-spacing: -0.015em; }
+.footer .meta { font-size: 0.86rem; color: var(--text-3); margin-top: 4px; max-width: 42ch; }
+.footer nav { display: flex; gap: 20px; font-size: 0.88rem; color: var(--text-2); align-items: flex-start; flex-wrap: wrap; }
+.footer nav a { text-decoration: none; }
+.footer nav a:hover { color: var(--text); }
+.footer-legal { margin-top: 32px; padding-top: 22px; border-top: 1px solid var(--hairline); }
+.footer-legal p { font-size: 0.78rem; color: var(--text-3); max-width: 78ch; }
+.footer-legal p + p { margin-top: 8px; }
+
+
+/* ------------------------------------------------------- scheme overrides
+   These come last on purpose. `.hero-demo` sets `--moment-text` in its own
+   rule above, and an override of equal specificity only wins if it is
+   declared afterwards. */
+@media (prefers-color-scheme: light) {
+  .hero-demo { --moment-text: color-mix(in srgb, var(--moment) 42%, #14161a); }
+}
