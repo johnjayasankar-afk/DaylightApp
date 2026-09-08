@@ -65,39 +65,96 @@
         <p class="cta-note">
           Requires macOS 14 or later. Not yet notarised — <a href="#gatekeeper">one extra step on first launch</a>.
         </p>
+        <p class="try-note">
+          Below is the app's actual schedule engine, not a picture of it. Pick a
+          preset, choose your city, and drag through the day.
+        </p>
       </div>
 
-      <!-- The demonstration. Same schedule maths as the app. -->
+      <!-- The demonstration. Runs the app's real engine, not a drawing of it. -->
       <figure class="hero-demo" data-reveal>
-        <figcaption class="demo-head">
-          <div>
-            <span class="demo-title">A day on the Balanced schedule</span>
-            <span class="demo-sub">The preset Daylight ships with. Drag to move through the day.</span>
-          </div>
-          <div class="readout" role="status" aria-live="polite">
-            <span class="read-time" id="read-time">—</span>
-            <span class="read-sep" aria-hidden="true">·</span>
-            <span class="read-name" id="read-name">—</span>
-            <span class="read-sep" aria-hidden="true">·</span>
-            <span class="read-value" id="read-kelvin">—</span>
-            <span class="read-sep" aria-hidden="true">·</span>
-            <span class="read-value" id="read-brightness">—</span>
-          </div>
-        </figcaption>
 
-        <svg id="curve" viewBox="0 0 1000 260" preserveAspectRatio="none"
-             role="img" aria-label="A 24-hour curve of display warmth. It holds a neutral 6500 kelvin through the day, falls through the evening to 4200 kelvin at 7 PM, then 3200 kelvin at 9:30 PM, and reaches 2800 kelvin at 11:30 PM overnight."></svg>
-
-        <div class="scrub-row">
-          <label class="visually-hidden" for="scrub">Time of day</label>
-          <input id="scrub" type="range" min="0" max="1439" step="1" value="720"
-                 aria-valuetext="Loading">
-          <button id="scrub-now" class="button tiny" type="button" hidden>Back to now</button>
+        <div class="demo-controls">
+          <div class="demo-presets" role="radiogroup" aria-label="Schedule preset">
+            <!-- Filled from the app's own presets. -->
+          </div>
+          <div class="demo-place">
+            <label class="visually-hidden" for="city">Your city, for sunrise and sunset</label>
+            <select id="city" class="city-select">
+              <option value="">Choose a city…</option>
+            </select>
+            <span class="sun-readout" id="sun-readout" aria-live="polite"></span>
+          </div>
         </div>
+
+        <div class="demo-body">
+          <div class="demo-chart">
+            <div class="demo-head">
+              <div>
+                <span class="demo-title" id="demo-title">A day on the Balanced schedule</span>
+                <span class="demo-sub" id="demo-sub">The preset Daylight ships with. Drag to move through the day.</span>
+              </div>
+              <div class="readout" role="status" aria-live="polite">
+                <span class="read-time" id="read-time">—</span>
+                <span class="read-sep" aria-hidden="true">·</span>
+                <span class="read-name" id="read-name">—</span>
+                <span class="read-sep" aria-hidden="true">·</span>
+                <span class="read-value" id="read-kelvin">—</span>
+                <span class="read-sep" aria-hidden="true">·</span>
+                <span class="read-value" id="read-brightness">—</span>
+              </div>
+            </div>
+
+            <svg id="curve" viewBox="0 0 1000 260" preserveAspectRatio="none"
+                 role="img" aria-labelledby="curve-desc"></svg>
+            <p id="curve-desc" class="visually-hidden"></p>
+
+            <div class="scrub-row">
+              <label class="visually-hidden" for="scrub">Time of day</label>
+              <input id="scrub" type="range" min="0" max="1439" step="1" value="720"
+                     aria-valuetext="Loading">
+              <button id="scrub-now" class="button tiny" type="button" hidden>Back to now</button>
+            </div>
+
+            <ul class="anchor-list" id="anchor-list" aria-label="Steps in this schedule"></ul>
+          </div>
+
+          <div class="demo-preview">
+            <span class="preview-label">What that looks like</span>
+            <div class="preview-screen" id="preview-screen">
+              <div class="preview-content" aria-hidden="true">
+                <div class="preview-titlebar"><i></i><i></i><i></i></div>
+                <div class="preview-inner">
+                  <p class="preview-h">The quick brown fox</p>
+                  <p class="preview-p">Body text at the current setting, so you can see what reading would feel like rather than only what the number says.</p>
+                  <div class="preview-swatches">
+                    <span style="background:#ffffff"></span>
+                    <span style="background:#c7ccd6"></span>
+                    <span style="background:#5b8dd6"></span>
+                    <span style="background:#4fb477"></span>
+                    <span style="background:#d8574b"></span>
+                    <span style="background:#e0a23f"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="preview-tint" id="preview-tint" aria-hidden="true"></div>
+            </div>
+            <button class="button tiny compare" id="compare" type="button"
+                    aria-pressed="false"
+                    title="Press and hold, or focus it and press Space, to see the same panel with no adjustment applied">Hold to compare</button>
+            <p class="preview-note">
+              An approximation drawn in this browser by multiplying the colours
+              on screen, which is the same operation Daylight performs — but on
+              this box only. A web page cannot change your display; the app
+              does.
+            </p>
+          </div>
+        </div>
+
         <p class="demo-foot">
-          This page is running the same schedule evaluation and colour maths the
-          app uses, over the same preset. It starts wherever you are in your own
-          day.
+          This is the app's own schedule engine and colour maths, running the
+          presets it ships with. Pick a city and the sun-following schedule uses
+          your real sunrise and sunset, calculated here, with no network request.
         </p>
       </figure>
     </div>
@@ -208,12 +265,11 @@
           from the icon. On a Mac with more than one display, a selector decides
           which of them a change applies to.
         </p>
-        <p class="menubar-note">
-          The icon itself fills in proportion to how warm the current setting
-          is, and shows paused and off as distinct shapes rather than as
-          colours — so it reads at a glance, and reads at all if you cannot
-          distinguish them.
-        </p>
+        <ul class="menubar-points">
+          <li><strong>The icon fills</strong> in proportion to how warm the current setting is, and shows paused and off as distinct shapes rather than colours — so it reads at a glance, and reads at all if you cannot tell those colours apart.</li>
+          <li><strong>A pause has a duration.</strong> Fifteen minutes, an hour, until the next scheduled change, or until you say otherwise — and it tells you when it ends.</li>
+          <li><strong>Restore is always one click away</strong>, and ⇧⌥⌘R does it from anywhere without Daylight needing any permission at all.</li>
+        </ul>
       </div>
       <figure class="menubar-shot">
         <picture>
@@ -381,6 +437,8 @@
   </div>
 </footer>
 
+<script src="assets/data.js" defer></script>
+<script src="assets/engine.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>

@@ -73,6 +73,11 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* `[hidden]` is only a UA-stylesheet `display: none`, so anything that sets
+   `display` beats it. Every component here that sets display would otherwise
+   have to remember; this makes the attribute mean what it says. */
+[hidden] { display: none !important; }
+
 html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -84,8 +89,6 @@ html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
-  /* Nothing should ever push the page sideways. */
-  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
@@ -195,6 +198,10 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
 
 .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; align-items: stretch; }
 .cta-note { margin-top: 14px; font-size: 0.84rem; color: var(--text-3); }
+.try-note {
+  margin-top: 26px; font-size: 0.9rem; color: var(--text-2);
+  max-width: 46ch; padding-left: 13px; border-left: 2px solid var(--accent-line);
+}
 .cta-note a { color: var(--text-2); }
 
 .button {
@@ -224,7 +231,7 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
      the same scope or it would keep the page-level default. */
   --moment-text: var(--moment);
   margin: clamp(36px, 6vw, 64px) 0 0; padding: 20px 20px 16px;
-  max-width: 100%; min-width: 0; overflow: hidden;
+  max-width: 100%; min-width: 0;
   background: linear-gradient(180deg, var(--moment-faint), transparent 60%), var(--surface);
   border: 1px solid var(--hairline); border-radius: var(--radius);
   transition: background .55s ease;
@@ -265,7 +272,8 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
 #scrub:active { cursor: grabbing; }
 #scrub::-webkit-slider-runnable-track {
   height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, #9ebde0 0%, #9ebde0 28%, #c39a6e 62%, #f08c3d 100%);
+  /* Painted from the schedule actually on screen — see setTrackGradient(). */
+  background: var(--day-gradient, linear-gradient(90deg, #9ebde0, #f08c3d));
 }
 #scrub::-webkit-slider-thumb {
   appearance: none; width: 16px; height: 16px; margin-top: -6px;
@@ -274,7 +282,7 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
 }
 #scrub::-moz-range-track {
   height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, #9ebde0 0%, #9ebde0 28%, #c39a6e 62%, #f08c3d 100%);
+  background: var(--day-gradient, linear-gradient(90deg, #9ebde0, #f08c3d));
 }
 #scrub::-moz-range-thumb {
   width: 15px; height: 15px; border-radius: 50%; background: #fff;
@@ -307,8 +315,9 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
 
 .quote-grid {
   display: grid; gap: 12px; margin-top: 32px;
-  grid-template-columns: repeat(auto-fit, minmax(min(268px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
 }
+@media (min-width: 900px) { .quote-grid { grid-template-columns: repeat(2, 1fr); } }
 blockquote {
   margin: 0; padding: 16px 18px; border-radius: var(--radius-sm);
   background: var(--surface); border: 1px solid var(--hairline);
@@ -340,8 +349,18 @@ blockquote.warn { border-left-color: var(--warn); color: var(--text-2); }
 
 .menubar-wrap {
   display: grid; gap: clamp(28px, 5vw, 56px); align-items: center;
-  grid-template-columns: minmax(min(320px, 100%), 1fr) minmax(min(240px, 100%), 300px);
+  grid-template-columns: minmax(min(320px, 100%), 1fr) minmax(min(240px, 100%), 286px);
 }
+.menubar-points { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 9px; }
+.menubar-points li {
+  position: relative; padding-left: 20px; font-size: 0.92rem; color: var(--text-2);
+}
+.menubar-points li::before {
+  content: ""; position: absolute; left: 2px; top: 0.62em;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  opacity: 0.75;
+}
+.menubar-points strong { color: var(--text); font-weight: 600; }
 @media (max-width: 780px) { .menubar-wrap { grid-template-columns: 1fr; } }
 .menubar-copy { min-width: 0; }
 .menubar-note { margin-top: 16px; font-size: 0.9rem; color: var(--text-2); }
@@ -435,6 +454,147 @@ blockquote.warn { border-left-color: var(--warn); color: var(--text-2); }
 .footer-legal p { font-size: 0.78rem; color: var(--text-3); max-width: 78ch; }
 .footer-legal p + p { margin-top: 8px; }
 
+
+
+/* ------------------------------------------------------------ the demo
+   The hero demo is the page's argument: it runs the app's real engine, so it
+   is built as a small instrument rather than an illustration. */
+
+.demo-controls {
+  display: flex; flex-wrap: wrap; gap: 12px 18px;
+  align-items: center; justify-content: space-between;
+  padding-bottom: 14px; margin-bottom: 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.demo-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chip {
+  appearance: none; cursor: pointer;
+  font: inherit; font-size: 0.83rem; font-weight: 500;
+  padding: 6px 13px; border-radius: 100px;
+  color: var(--text-2); background: transparent;
+  border: 1px solid var(--hairline-firm);
+  transition: background .18s ease, color .18s ease, border-color .18s ease;
+}
+.preset-chip:hover { color: var(--text); background: var(--surface-2); }
+.preset-chip.is-active {
+  color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line);
+}
+
+.demo-place { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.city-select {
+  appearance: none; font: inherit; font-size: 0.83rem;
+  padding: 6px 30px 6px 12px; border-radius: 100px;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--hairline-firm); cursor: pointer;
+  max-width: 220px; text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 11px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+.city-select:hover { border-color: var(--accent-line); }
+/* When a sun-following schedule is picked and no city is set, the control that
+   would fix that says so instead of sitting there inert. */
+.demo-place.is-needed .city-select {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.sun-readout {
+  font-size: 0.78rem; color: var(--text-2);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.demo-body {
+  display: grid; gap: clamp(16px, 3vw, 28px);
+  grid-template-columns: minmax(min(420px, 100%), 1fr) minmax(min(230px, 100%), 264px);
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .demo-body { grid-template-columns: 1fr; }
+  /* Stacked, the preview is the most persuasive thing here and belongs next to
+     the curve it illustrates, not underneath a table of numbers. The chart is
+     split so the schedule's step list follows both. */
+  .demo-chart { display: contents; }
+  .demo-chart > .demo-head { order: 1; }
+  .demo-chart > #curve { order: 2; }
+  .demo-chart > .scrub-row { order: 3; }
+  .demo-preview { order: 4; margin-top: 4px; }
+  .demo-chart > .anchor-list { order: 5; }
+  .demo-chart > #curve-desc { order: 0; }
+}
+.demo-chart, .demo-preview { min-width: 0; }
+
+.anchor-list {
+  list-style: none; margin: 14px 0 0; padding: 0;
+  display: grid; gap: 3px;
+  max-width: 460px;
+}
+.anchor-list li {
+  display: grid; align-items: baseline; gap: 10px;
+  grid-template-columns: 46px 1fr auto;
+  font-size: 0.79rem; padding: 2px 0;
+}
+.anchor-list .a-time {
+  color: var(--text-2); font-variant-numeric: tabular-nums;
+  font-family: var(--mono); font-size: 0.74rem;
+}
+.anchor-list .a-name { color: var(--text); }
+.anchor-list .a-val {
+  color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 0.74rem;
+}
+.anchor-list .a-note {
+  grid-column: 2 / -1; color: var(--text-3); font-size: 0.72rem; margin-top: -2px;
+}
+
+/* ------------------------------------------------- the warmth preview */
+
+.demo-preview { display: flex; flex-direction: column; gap: 8px; }
+.preview-label {
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-2);
+}
+.preview-screen {
+  position: relative; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--hairline);
+  /* A light surface, because that is what most of a screen is, and it is where
+     a colour shift is most visible. */
+  background: #f4f5f7;
+  isolation: isolate;
+}
+.preview-titlebar {
+  display: flex; gap: 5px; padding: 8px 10px;
+  background: #e6e8ec; border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.preview-titlebar i { width: 8px; height: 8px; border-radius: 50%; background: #c3c7ce; }
+.preview-inner { padding: 12px; }
+.preview-h { margin: 0; font-size: 0.94rem; font-weight: 600; color: #16181d; }
+.preview-p { margin: 6px 0 0; font-size: 0.76rem; line-height: 1.5; color: #4a5059; }
+.preview-swatches { display: flex; gap: 5px; margin-top: 11px; }
+.preview-swatches span {
+  flex: 1; height: 22px; border-radius: 4px;
+  border: 1px solid rgba(0,0,0,0.10);
+}
+/* Multiplying by the app's own channel gains — the same arithmetic it applies
+   to the framebuffer, confined to this element. */
+.preview-tint {
+  position: absolute; inset: 0; pointer-events: none;
+  mix-blend-mode: multiply;
+  background-color: rgb(255,255,255);
+  transition: background-color .45s ease;
+}
+@media (prefers-reduced-motion: reduce) { .preview-tint { transition: none; } }
+
+.compare { align-self: flex-start; }
+.compare::after {
+  content: ""; width: 0; height: 0;
+}
+.compare.is-on { color: var(--accent); border-color: var(--accent-line); }
+.preview-note {
+  font-size: 0.71rem; line-height: 1.5; color: var(--text-2); margin: 2px 0 0;
+}
+
+.curve-anchor.is-clamped { stroke: var(--accent); stroke-opacity: 0.4; }
 
 /* ------------------------------------------------------- scheme overrides
    These come last on purpose. `.hero-demo` sets `--moment-text` in its own
