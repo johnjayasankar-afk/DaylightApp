@@ -58,7 +58,7 @@
         <div class="cta-row">
           <a class="button primary" href="#download">
             Download for macOS
-            <span class="button-sub">Version 1.0.0 · 2.0 MB · Apple Silicon &amp; Intel</span>
+            <span class="button-sub">Version 1.0.0 · 2.1 MB · Apple Silicon &amp; Intel</span>
           </a>
           <a class="button ghost" href="#source">Build from source</a>
         </div>
@@ -68,6 +68,14 @@
         <p class="try-note">
           Below is the app's actual schedule engine, not a picture of it. Pick a
           preset, choose your city, and drag through the day.
+        </p>
+        <!-- Shown only when the demo's scripts have not run, so the line above
+             is never left pointing at nothing. Removed from the flow by app.js
+             taking `no-js` off the document. -->
+        <p class="try-note try-note-fallback">
+          The interactive version needs JavaScript, and it has not run here —
+          so it is not below. Everything else on this page, including the
+          download and what the app does and doesn't claim, is unaffected.
         </p>
       </div>
 
@@ -117,8 +125,13 @@
             </div>
 
             <ul class="anchor-list" id="anchor-list" aria-label="Steps in this schedule"></ul>
+
+            <p class="editor-hint" id="editor-hint">
+              Open a step to change when it happens and what it does.
+            </p>
           </div>
 
+          <div class="demo-rail">
           <div class="demo-preview">
             <span class="preview-label">What that looks like</span>
             <div class="preview-screen" id="preview-screen">
@@ -149,6 +162,78 @@
               does.
             </p>
           </div>
+
+          <div class="take-it" id="take-it">
+            <span class="preview-label">Take it with you</span>
+            <p class="take-note">
+              <strong>Daylight imports the file</strong> this writes, and a link
+              carries the whole schedule to anyone else.
+            </p>
+            <label class="take-name">
+              <span class="ec-label">Call it</span>
+              <input id="schedule-title" class="ec-text" type="text" maxlength="60"
+                     spellcheck="false" autocomplete="off">
+            </label>
+            <div class="editor-actions">
+              <button id="schedule-export" class="button tiny primary-quiet" type="button">
+                Download for Daylight
+              </button>
+              <button id="schedule-share" class="button tiny" type="button">
+                Copy link
+              </button>
+              <button id="schedule-reset" class="button tiny" type="button" hidden>
+                Reset to the preset
+              </button>
+            </div>
+            <p class="editor-note" id="editor-note" hidden></p>
+          </div>
+          </div>
+        </div>
+
+        <div class="demo-year" id="demo-year">
+          <div class="year-head">
+            <div>
+              <span class="demo-title">The same schedule, across the year</span>
+              <span class="demo-sub" id="year-sub">Sunrise and sunset where you are, every day. Drag to move through the year.</span>
+            </div>
+            <div class="readout year-readout" role="status" aria-live="polite">
+              <span class="read-time" id="year-date">—</span>
+              <span class="read-sep" aria-hidden="true">·</span>
+              <span class="read-value" id="year-sun">—</span>
+            </div>
+          </div>
+
+          <div class="ribbon-wrap">
+            <!-- The field underneath is the schedule's own colour, computed by
+                 the same engine the app runs: warmth and software dimming for
+                 every minute of every day. The lines above it are the sun. -->
+            <canvas id="ribbon-field" aria-hidden="true"></canvas>
+            <svg id="ribbon" viewBox="0 0 1000 220" preserveAspectRatio="none"
+                 role="img" aria-labelledby="ribbon-desc"></svg>
+            <!-- The ribbon stretches to fill its width, which is right for the
+                 bands but would squash type. Labels therefore live in HTML on
+                 top of it, positioned as percentages, and keep their shape. -->
+            <div class="ribbon-hours" id="ribbon-hours" aria-hidden="true"></div>
+            <div class="ribbon-months" id="ribbon-months" aria-hidden="true"></div>
+          </div>
+          <p id="ribbon-desc" class="visually-hidden"></p>
+
+          <div class="scrub-row">
+            <label class="visually-hidden" for="year-scrub">Time of year</label>
+            <input id="year-scrub" type="range" min="0" max="364" step="1" value="0"
+                   aria-valuetext="Loading">
+            <button id="year-today" class="button tiny" type="button" hidden>Back to today</button>
+          </div>
+
+          <p class="year-note" id="year-note"></p>
+
+          <ul class="ribbon-legend" id="ribbon-legend">
+            <li><span class="key key-field"></span>Screen colour, warm to neutral</li>
+            <li><span class="key key-sun"></span>Sunrise and sunset</li>
+            <li><span class="key key-clamp"></span>A step held at its limit</li>
+            <li class="polar-key" hidden><span class="key key-polar-day"></span>Sun never sets</li>
+            <li class="polar-key" hidden><span class="key key-polar-night"></span>Sun never rises</li>
+          </ul>
         </div>
 
         <p class="demo-foot">
@@ -186,21 +271,48 @@
         for it.
       </p>
 
-      <div class="quote-grid">
-        <blockquote><p>Your display is slightly warm, following Balanced.</p></blockquote>
-        <blockquote><p>Your display is neutral because “Colour Work” is active for this app.</p></blockquote>
-        <blockquote><p>Reading until 10:30 PM. Your schedule resumes afterwards.</p></blockquote>
-        <blockquote class="warn"><p>Another display utility is competing for Studio Display.</p></blockquote>
+      <div class="ladder-demo">
+        <div class="ladder-intro">
+          <h3 class="ladder-title">Switch layers on and watch them argue</h3>
+          <p class="ladder-lede">
+            The highest layer that speaks about a control wins it — and warmth
+            and brightness are decided <em>separately</em>, so a rule that only
+            dims cannot quietly discard your schedule's warmth. The six layers
+            and the order below are the app's own; the little schedules and
+            rules attached to them are examples, so there is something for the
+            resolver to decide between.
+          </p>
+        </div>
+
+        <div class="ladder-body">
+          <div class="ladder-column">
+            <p class="ladder-edge" aria-hidden="true">Top of the ladder — overrules everything below</p>
+            <ul class="ladder" id="ladder" aria-label="Precedence layers, highest first"></ul>
+            <p class="ladder-edge" aria-hidden="true">The base layer, if nothing above it speaks</p>
+          </div>
+
+          <div class="ladder-out">
+            <div class="ladder-result" id="ladder-result"></div>
+            <blockquote class="ladder-say">
+              <p id="ladder-explanation" role="status" aria-live="polite"></p>
+            </blockquote>
+            <p class="ladder-foot">
+              That sentence is not written for this page. It comes from the same
+              resolver the app runs, checked against it across every combination
+              of the six layers.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div class="how-grid">
         <article>
-          <h3>A precedence you can see</h3>
+          <h3>A ladder, not a pile of rules</h3>
           <p>
-            Warmth and brightness are resolved separately, so a rule that dims on
-            battery does not quietly discard your schedule's warmth. Where two
-            things set the same control, a fixed ladder decides — and the ladder
-            is printed in the app, with the active layer marked.
+            Six layers, a fixed order, no user-assignable priorities. A rules
+            system you can predict beats one you can fully rewire, and the ladder
+            is printed in the app with the active layer marked — the same one you
+            just used above.
           </p>
         </article>
         <article>
@@ -336,12 +448,12 @@
           <img src="assets/icon-256.png" width="72" height="72" alt="" aria-hidden="true">
           <div>
             <h3>Daylight 1.0.0</h3>
-            <p class="meta">macOS 14 or later · Apple Silicon &amp; Intel · 2.0 MB</p>
+            <p class="meta">macOS 14 or later · Apple Silicon &amp; Intel · 2.1 MB</p>
           </div>
           <a class="button primary" href="downloads/Daylight-1.0.0.zip" download>Download</a>
         </div>
         <p class="checksum">
-          SHA-256 <code>81733980f958f0eb40a134e25323af769ad1b32d3e7400b9e8f8fab6ecebe92e</code>
+          SHA-256 <code>8ec455957faa47e78f0676ece6bc5ddbb4901e0c81cd2be4a6347b6b8bb4dcae</code>
         </p>
       </div>
 
@@ -439,6 +551,8 @@
 
 <script src="assets/data.js" defer></script>
 <script src="assets/engine.js" defer></script>
+<script src="assets/policy.js" defer></script>
+<script src="assets/export.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>

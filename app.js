@@ -13,8 +13,29 @@
   document.documentElement.classList.remove('no-js');
 
   const E = window.DaylightEngine;
-  if (!E) return;
+  if (!E) { reportDemoUnavailable(); return; }
 
+  /* The surrounding copy promises a live demo running the app's own engine. If
+     the engine or its data did not load, saying so is the only honest thing —
+     leaving the static markup in place would be a claim the page cannot meet. */
+  function reportDemoUnavailable() {
+    const body = document.querySelector('.demo-body');
+    if (!body) return;
+    body.querySelectorAll('.demo-chart, .demo-preview, .demo-year').forEach((el) => {
+      el.hidden = true;
+    });
+    const controls = document.querySelector('.demo-controls');
+    if (controls) controls.hidden = true;
+    const note = document.createElement('p');
+    note.className = 'demo-unavailable';
+    note.setAttribute('role', 'status');
+    note.textContent = 'The live demo could not start — '
+      + (window.DAYLIGHT_ENGINE_MISSING || 'a script did not load')
+      + '. Reloading usually fixes it. Everything else on this page is unaffected.';
+    body.prepend(note);
+  }
+
+  const C = E.constants;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const DAY = E.DAY;
   const $ = (id) => document.getElementById(id);
@@ -25,19 +46,178 @@
 
   // ------------------------------------------------------------- state
 
+  /* Edits live per preset, so switching away and back does not throw away
+     someone's work, and they survive a reload. The stock presets are never
+     mutated — an edited preset is a clone with values replaced. */
+  const EDIT_KEY = 'daylight.schedule.v2';
+  const LEGACY_EDIT_KEY = 'daylight.schedule-edits.v1';
+  const MAX_STEPS = 12;
+
+  /* An edited schedule is stored as its whole list of steps rather than as a
+     patch per index, because steps can now be added and removed and an index
+     stops meaning anything the moment they can. */
+  let edits = {};
+
+  /* Every value that reaches the engine is clamped here, once. The schedule can
+     arrive from localStorage or from a link, so none of it is trusted. */
+  const clampNum = (v, lo, hi, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(Math.max(n, lo), hi);
+  };
+
+  function sanitiseAnchor(a, fallback) {
+    const base = fallback || {};
+    const out = {
+      id: typeof a.id === 'string' && a.id ? a.id.slice(0, 24) : nextStepID(),
+      name: String(a.name ?? base.name ?? 'Step').slice(0, 40).trim() || 'Step',
+      kelvin: clampNum(a.kelvin, C.normalRange[0], C.normalRange[1], base.kelvin ?? C.neutralKelvin),
+      brightness: clampNum(a.brightness, C.dimmingFloor, 1, base.brightness ?? 1),
+      fade: clampNum(a.fade, 0, 240, base.fade ?? 30),
+    };
+    if (a.kind === 'solar' && (a.event === 'sunrise' || a.event === 'sunset')) {
+      out.kind = 'solar';
+      out.event = a.event;
+      out.offset = clampNum(a.offset, -240, 240, 0);
+      if (a.earliest != null) out.earliest = clampNum(a.earliest, 0, 1439, 0);
+      if (a.latest != null) out.latest = clampNum(a.latest, 0, 1439, 1439);
+    } else {
+      out.kind = 'clock';
+      out.minute = clampNum(a.minute, 0, 1439, base.minute ?? 720);
+    }
+    return out;
+  }
+
+  function sanitiseAnchors(list, base) {
+    if (!Array.isArray(list) || !list.length) return null;
+    return list.slice(0, MAX_STEPS).map((a, i) => sanitiseAnchor(a, base && base.anchors[i]));
+  }
+
+  let stepSeq = 0;
+  const nextStepID = () => `s${(stepSeq += 1).toString(36)}${Date.now().toString(36).slice(-4)}`;
+
+  /* Stock presets have no ids of their own; giving each step a stable one lets
+     a row be matched to its resolved anchor after a rename, and after the
+     resolver has sorted and possibly merged them. */
+  const identified = new Map();
+  function withIDs(base) {
+    let out = identified.get(base.name);
+    if (!out) {
+      out = { ...base, anchors: base.anchors.map((a, i) => ({ ...a, id: `${base.name}#${i}` })) };
+      identified.set(base.name, out);
+    }
+    return out;
+  }
+
+  function loadEdits() {
+    try {
+      const stored = localStorage.getItem(EDIT_KEY);
+      if (stored) { edits = JSON.parse(stored) || {}; return; }
+    } catch (_) { edits = {}; }
+    // Carry forward anything saved by the previous, patch-shaped format.
+    try {
+      const legacy = JSON.parse(localStorage.getItem(LEGACY_EDIT_KEY) || 'null');
+      if (legacy && typeof legacy === 'object') {
+        for (const [name, patches] of Object.entries(legacy)) {
+          const base = E.presets.find((p) => p.name === name);
+          if (!base || !patches || !Object.keys(patches).length) continue;
+          edits[name] = {
+            anchors: withIDs(base).anchors.map((a, i) => ({ ...a, ...(patches[i] || {}) })),
+          };
+        }
+        if (Object.keys(edits).length) saveEdits();
+      }
+      localStorage.removeItem(LEGACY_EDIT_KEY);
+    } catch (_) { /* nothing worth keeping */ }
+  }
+
+  function saveEdits() {
+    try { localStorage.setItem(EDIT_KEY, JSON.stringify(edits)); } catch (_) { /* private mode */ }
+  }
+
+  /* Applies any stored edits to a stock preset, returning a new object of the
+     same shape the engine already understands. */
+  function withEdits(base) {
+    const withIds = withIDs(base);
+    const e = edits[base.name];
+    if (!e || !Array.isArray(e.anchors) || !e.anchors.length) return withIds;
+    return { ...withIds, anchors: e.anchors };
+  }
+
+  /* Caches downstream key off the preset, so they have to see the edits too. */
+  function editSignature(base) {
+    const e = edits[base.name];
+    return e && e.anchors ? JSON.stringify(e.anchors) : '';
+  }
+
+  /* A schedule someone has changed is theirs, so it can carry their name — into
+     the exported file and along the shared link. */
+  const defaultTitle = (base) => `${base.name} (edited on the web)`;
+
+  function scheduleTitle() {
+    const e = edits[state.base.name];
+    const stored = e && typeof e.title === 'string' ? e.title.trim() : '';
+    return stored || defaultTitle(state.base);
+  }
+
+  function setScheduleTitle(value) {
+    const clean = String(value || '').trim().slice(0, 60);
+    const name = state.base.name;
+    if (!edits[name]) edits[name] = { anchors: withEdits(state.base).anchors };
+    if (clean && clean !== defaultTitle(state.base)) edits[name].title = clean;
+    else delete edits[name].title;
+    saveEdits();
+  }
+
+  /* Writes a new list of steps for the current preset, sorted by when they
+     happen so the list always reads in order. Solar steps sort by their
+     nominal time, which is the best that can be done without a date. */
+  function setAnchors(list) {
+    const cleaned = sanitiseAnchors(list, withIDs(state.base));
+    if (!cleaned) return;
+    cleaned.sort((x, y) => nominalMinute(x) - nominalMinute(y));
+    edits[state.base.name] = { anchors: cleaned };
+    saveEdits();
+    scheduleRefresh();
+  }
+
   const state = {
+    base: E.presets[0],
     preset: E.presets[0],
     city: null,
     anchors: [],
     minute: nowMinute(),
     following: true,
     comparing: false,
+    year: new Date().getFullYear(),
+    dayIndex: 0,          // which day of the year the chart is showing
+    onToday: true,
+    profile: [],          // the whole year, when a city is set
   };
 
   function nowMinute() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
 
+  /* The day chart shows one day out of the year, so recomputing means
+     resolving the schedule for that specific date — not for "now". */
+  function selectedDate() {
+    return new Date(Date.UTC(state.year, 0, 1 + state.dayIndex, 12, 0, 0));
+  }
+
+  /* A year of sunrises costs about 40ms to compute and a sun-following preset
+     rather more, and recompute() runs on every scrub. The result depends only
+     on the preset, the city and the year, so it is kept. */
+  const profileCache = new Map();
+
   function recompute() {
-    state.anchors = E.resolveAnchors(state.preset, state.city);
+    state.anchors = E.resolveAnchors(state.preset, state.city, selectedDate());
+    if (!state.city) { state.profile = []; return; }
+    const key = `${state.preset.name}|${editSignature(state.base)}|${state.city.name}|${state.city.region}|${state.year}`;
+    let profile = profileCache.get(key);
+    if (!profile) {
+      profile = E.yearProfile(state.preset, state.city, state.year);
+      profileCache.set(key, profile);
+    }
+    state.profile = profile;
   }
 
   // ----------------------------------------------------------- presets
@@ -72,22 +252,260 @@
   });
 
   function selectPreset(preset, button) {
-    state.preset = preset;
+    state.base = preset;
+    state.preset = withEdits(preset);
     presetHolder.querySelectorAll('.preset-chip').forEach((c) => {
       const on = c === button;
       c.classList.toggle('is-active', on);
       c.setAttribute('aria-checked', on ? 'true' : 'false');
       c.tabIndex = on ? 0 : -1;
     });
-    $('demo-title').textContent = `A day on the ${preset.name} schedule`;
     $('demo-sub').textContent = presetBlurb[preset.name] || '';
-    document.querySelector('.demo-place').classList.toggle('is-needed', usesSolar(preset) && !state.city);
-    recompute();
-    draw();
-    paint(state.minute);
+    document.querySelector('.demo-place').classList.toggle('is-needed', usesSolar(state.preset) && !state.city);
+    refresh();
   }
 
+  /* One path for "the schedule changed": every view reads from state, so they
+     all update together and none can be forgotten. */
+  function refresh() {
+    state.preset = withEdits(state.base);
+    const changed = isEdited();
+    $('demo-title').textContent = changed
+      ? `A day on your edited ${state.base.name} schedule`
+      : `A day on the ${state.base.name} schedule`;
+    // The heading already says the schedule is edited; a badge beside it would
+    // only say it twice, and less reliably to a screen reader.
+    $('schedule-reset').hidden = !changed;
+    const field = $('schedule-title');
+    if (field && document.activeElement !== field) field.placeholder = scheduleTitle();
+    recompute();
+    draw();
+    drawRibbon();
+    setDay(state.dayIndex, false);
+    applyPendingFocus();
+  }
+
+  /* Runs after every rendering pass of a refresh, not inside one: the list is
+     built more than once per refresh, and focusing during an early pass only
+     to have that element replaced is the same as not focusing at all. */
+  function applyPendingFocus() {
+    if (!pendingFocus) return;
+    const want = pendingFocus;
+    pendingFocus = null;
+    const list = $('anchor-list');
+    if (want.kind === 'name') {
+      const head = list.querySelector(`.anchor-head[data-id="${CSS.escape(want.id)}"]`);
+      const field = head && head.parentElement.querySelector('.ec-text');
+      if (field) { field.focus(); field.select(); }
+    } else if (want.kind === 'add') {
+      const add = list.querySelector('.anchor-add button:not(:disabled)');
+      if (add) add.focus();
+    }
+  }
+
+  const isEdited = () => !!editSignature(state.base);
+
   const usesSolar = (preset) => preset.anchors.some((a) => a.kind === 'solar');
+
+  // ------------------------------------------------- taking it to the app
+
+  /* The app can import a settings file, so an edited schedule need not stay on
+     this page. The file's shape is not invented here: the app emits a real
+     exported settings object into data.js, and this only replaces values
+     inside a copy of it. */
+  function buildSettingsFile() {
+    // The construction itself lives in assets/export.js so the same code can be
+    // run outside a browser and checked against the real app.
+    const current = withEdits(state.base);
+    return window.DaylightExport.buildSettingsFile(
+      window.DAYLIGHT_DATA.settingsTemplate,
+      state.base.name,
+      current.anchors,
+      state.city,
+      (n) => { const b = new Uint8Array(n); window.crypto.getRandomValues(b); return b; },
+      scheduleTitle(),
+    );
+  }
+
+  // ---------------------------------------------------- sharing a schedule
+
+  /* A schedule is small, so a link can carry the whole thing and no server has
+     to be involved. Compact tuples rather than objects, because this ends up in
+     a URL somebody has to paste somewhere. */
+  const SHARE_VERSION = 1;
+
+  function b64urlEncode(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function b64urlDecode(text) {
+    const padded = text.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  function encodeSchedule(baseName, anchors) {
+    const rows = anchors.map((a) => (a.kind === 'clock'
+      ? [a.name, 0, Math.round(a.minute), a.kelvin, Math.round(a.brightness * 100), a.fade]
+      : [a.name, 1, a.event === 'sunrise' ? 0 : 1, Math.round(a.offset || 0),
+         a.earliest == null ? -1 : a.earliest, a.latest == null ? -1 : a.latest,
+         a.kelvin, Math.round(a.brightness * 100), a.fade]));
+    const title = scheduleTitle();
+    const payload = title === defaultTitle(state.base)
+      ? [SHARE_VERSION, baseName, rows]
+      : [SHARE_VERSION, baseName, rows, title];
+    return b64urlEncode(JSON.stringify(payload));
+  }
+
+  /* Everything below arrives from a URL, so it is decoded permissively and
+     then handed to the same clamping every other input goes through. */
+  function decodeSchedule(code) {
+    let parsed;
+    try { parsed = JSON.parse(b64urlDecode(code)); } catch (_) { return null; }
+    if (!Array.isArray(parsed) || parsed[0] !== SHARE_VERSION) return null;
+    const [, baseName, rows, title] = parsed;
+    const base = E.presets.find((p) => p.name === baseName);
+    if (!base || !Array.isArray(rows) || !rows.length) return null;
+    const anchors = rows.slice(0, MAX_STEPS).map((r) => (Array.isArray(r) && r[1] === 1
+      ? { name: r[0], kind: 'solar', event: r[2] === 0 ? 'sunrise' : 'sunset', offset: r[3],
+          earliest: r[4] === -1 ? null : r[4], latest: r[5] === -1 ? null : r[5],
+          kelvin: r[6], brightness: (r[7] ?? 100) / 100, fade: r[8] }
+      : { name: Array.isArray(r) ? r[0] : '', kind: 'clock', minute: r[2],
+          kelvin: r[3], brightness: (r[4] ?? 100) / 100, fade: r[5] }));
+    const cleaned = sanitiseAnchors(anchors, withIDs(base));
+    if (!cleaned) return null;
+    // Names come from a stranger; make sure they are still distinct here.
+    const seen = [];
+    cleaned.forEach((a) => { a.name = uniqueStepName(a.name, seen); seen.push(a); });
+    return { base, anchors: cleaned, title: typeof title === 'string' ? title.slice(0, 60) : null };
+  }
+
+  function shareURL() {
+    const current = withEdits(state.base);
+    const code = encodeSchedule(state.base.name, current.anchors);
+    return `${location.origin}${location.pathname}#s=${code}`;
+  }
+
+  async function copyShareLink() {
+    const url = shareURL();
+    const note = $('editor-note');
+    note.hidden = false;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch (_) { copied = false; }
+    note.className = 'editor-note is-done';
+    note.textContent = '';
+    const line = document.createElement('span');
+    line.textContent = copied
+      ? 'Link copied. It carries the whole schedule — no account, nothing stored on a server. '
+      : 'Your browser would not let the page reach the clipboard, so here is the link: ';
+    note.appendChild(line);
+    if (!copied) {
+      const field = document.createElement('input');
+      field.type = 'text';
+      field.className = 'ec-text share-field';
+      field.readOnly = true;
+      field.value = url;
+      field.setAttribute('aria-label', 'Link to this schedule');
+      note.appendChild(field);
+      field.focus();
+      field.select();
+    } else {
+      const tail = document.createElement('span');
+      tail.textContent = 'Opening it shows this schedule in whichever city the visitor is in.';
+      note.appendChild(tail);
+    }
+  }
+
+  /* A link opens straight into the schedule it describes, rather than into the
+     stock preset with the schedule hidden behind a button. */
+  function applySharedSchedule() {
+    const match = /(?:^|[#&])s=([A-Za-z0-9_-]+)/.exec(location.hash);
+    if (!match) return false;
+    const shared = decodeSchedule(match[1]);
+    if (!shared) {
+      announce('That link did not describe a schedule this page understands.');
+      return false;
+    }
+    edits[shared.base.name] = { anchors: shared.anchors };
+    if (shared.title) edits[shared.base.name].title = shared.title;
+    saveEdits();
+    state.base = shared.base;
+    const chips = [...presetHolder.querySelectorAll('.preset-chip')];
+    const chip = chips.find((c) => c.textContent.trim() === shared.base.name);
+    if (chip) {
+      chips.forEach((c) => {
+        const on = c === chip;
+        c.classList.toggle('is-active', on);
+        c.setAttribute('aria-checked', on ? 'true' : 'false');
+        c.tabIndex = on ? 0 : -1;
+      });
+    }
+    $('demo-sub').textContent = presetBlurb[shared.base.name] || '';
+    const note = $('editor-note');
+    note.hidden = false;
+    note.className = 'editor-note is-done';
+    note.textContent = 'This schedule came from a link. Change anything you like — '
+      + '"Reset to the preset" puts it back to the one Daylight ships.';
+    return true;
+  }
+
+  function exportSchedule() {
+    const file = buildSettingsFile();
+    const note = $('editor-note');
+    if (!file) {
+      note.hidden = false;
+      note.className = 'editor-note is-problem';
+      note.textContent = 'This build of the page has no settings template, so it cannot write a file.';
+      return;
+    }
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Daylight Settings.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    note.hidden = false;
+    note.className = 'editor-note is-done';
+    note.innerHTML = 'Saved <strong>Daylight Settings.json</strong>. In the app, open ' +
+      'Settings → Your settings → <strong>Import…</strong> and choose it. ' +
+      'Importing <strong>replaces</strong> your current Daylight settings, so export ' +
+      'yours first if there is anything you want to keep. The file carries the four ' +
+      'built-in schedules plus yours, which it makes active.';
+  }
+
+  const titleField = $('schedule-title');
+  titleField.placeholder = defaultTitle(E.presets[0]);
+  const commitTitle = () => {
+    setScheduleTitle(titleField.value);
+    titleField.value = '';
+    titleField.placeholder = scheduleTitle();
+    refresh();
+  };
+  titleField.addEventListener('blur', commitTitle);
+  titleField.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); titleField.blur(); }
+    if (e.key === 'Escape') { titleField.value = ''; titleField.blur(); }
+  });
+
+  $('schedule-export').addEventListener('click', exportSchedule);
+  $('schedule-share').addEventListener('click', copyShareLink);
+  $('schedule-reset').addEventListener('click', () => {
+    delete edits[state.base.name];
+    saveEdits();
+    $('editor-note').hidden = true;
+    refresh();
+  });
 
   // ------------------------------------------------------------ cities
 
@@ -119,7 +537,8 @@
     document.querySelector('.demo-place').classList.toggle('is-needed', usesSolar(state.preset) && !state.city);
     recompute();
     draw();
-    paint(state.minute);
+    drawRibbon();
+    setDay(state.dayIndex, false);
     updateSun();
   });
 
@@ -193,7 +612,7 @@
       const s = E.evaluate(state.anchors, (i / 48) * DAY);
       const stop = document.createElementNS(NS, 'stop');
       stop.setAttribute('offset', `${(i / 48) * 100}%`);
-      stop.setAttribute('stop-color', rgba(E.swatch(s.kelvin), 0.62));
+      stop.setAttribute('stop-color', rgba(tintColour(s.kelvin, s.brightness), 0.62));
       grad.appendChild(stop);
     }
     defs.appendChild(grad);
@@ -262,7 +681,7 @@
     const stops = [];
     for (let i = 0; i <= 24; i++) {
       const s = E.evaluate(state.anchors, (i / 24) * DAY);
-      stops.push(`${rgba(E.swatch(s.kelvin), 1)} ${((i / 24) * 100).toFixed(1)}%`);
+      stops.push(`${rgba(tintColour(s.kelvin, s.brightness), 1)} ${((i / 24) * 100).toFixed(1)}%`);
     }
     stage.style.setProperty('--day-gradient', `linear-gradient(90deg, ${stops.join(', ')})`);
   }
@@ -283,23 +702,733 @@
 
   function drawAnchorList() {
     const list = $('anchor-list');
+    /* Rendered from the schedule's own steps rather than the resolved ones:
+       resolution sorts them and can merge two that land within a quarter of an
+       hour, and an editor has to keep showing a step you can still edit. */
+    /* Matched by a stable id rather than by name: a step can now be renamed,
+       and two could briefly share a name while one is being typed. */
+    const resolvedByID = new Map(state.anchors.map((a) => [a.id, a]));
+    /* An explicit request wins over whatever happened to be open: adding a step
+       while another was expanded used to leave the old one open and the new one
+       hidden, which also swallowed the focus meant for its name field. */
+    const openID = pendingOpenID
+      || list.querySelector('.anchor-head[aria-expanded="true"]')?.dataset.id;
+    pendingOpenID = null;
     list.innerHTML = '';
-    state.anchors.forEach((a) => {
-      const li = document.createElement('li');
-      const note = a.origin === 'clamped-early' ? 'held later than sunset'
-                 : a.origin === 'clamped-late' ? 'held earlier than sunset'
+
+    state.preset.anchors.forEach((def, i) => {
+      const a = resolvedByID.get(def.id);
+      const merged = !a;
+      const src = a || def;
+      const note = merged ? 'overlaps the step before it'
+                 : a.origin === 'clamped-early' ? 'held later than the sun'
+                 : a.origin === 'clamped-late' ? 'held earlier than the sun'
                  : a.origin === 'no-location' ? 'fallback — no city chosen'
                  : a.origin === E.POLAR_DAY ? 'the sun does not set today'
                  : a.origin === E.POLAR_NIGHT ? 'the sun does not rise today'
                  : a.kind === 'solar' ? 'follows the sun' : '';
-      li.innerHTML =
-        `<span class="a-time">${E.clockString(a.minute)}</span>` +
-        `<span class="a-name">${a.name}</span>` +
-        `<span class="a-val">${Math.round(a.kelvin / 50) * 50} K · ${Math.round(a.brightness * 100)}%</span>` +
-        (note ? `<span class="a-note">${note}</span>` : '');
+
+      const li = document.createElement('li');
+      li.className = 'anchor-row' + (merged ? ' is-merged' : '');
+      const panelID = `step-panel-${i}`;
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'anchor-head';
+      head.dataset.id = def.id;
+      head.setAttribute('aria-expanded', 'false');
+      head.setAttribute('aria-controls', panelID);
+      // Names are typed by the visitor and can arrive from a link, so every
+      // one of these goes in as text, never as markup.
+      const cell = (cls, text) => {
+        const el = document.createElement('span');
+        el.className = cls;
+        el.textContent = text;
+        return el;
+      };
+      head.append(
+        cell('a-time', merged ? '—' : E.clockString(src.minute)),
+        cell('a-name', def.name),
+        cell('a-val', `${Math.round(def.kelvin / 50) * 50} K · ${Math.round(def.brightness * 100)}%`),
+        cell('a-note', note),
+      );
+      const chevron = document.createElement('span');
+      chevron.className = 'a-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+      head.appendChild(chevron);
+
+      const panel = document.createElement('div');
+      panel.className = 'anchor-edit';
+      panel.id = panelID;
+      panel.setAttribute('role', 'group');
+      panel.setAttribute('aria-label', `${def.name} settings`);
+      panel.hidden = true;
+      buildStepControls(panel, i, def);
+
+      head.addEventListener('click', () => {
+        const open = head.getAttribute('aria-expanded') === 'true';
+        list.querySelectorAll('.anchor-head').forEach((h) => {
+          h.setAttribute('aria-expanded', 'false');
+          h.parentElement.querySelector('.anchor-edit').hidden = true;
+        });
+        if (!open) { head.setAttribute('aria-expanded', 'true'); panel.hidden = false; }
+      });
+
+      li.appendChild(head);
+      li.appendChild(panel);
       list.appendChild(li);
+
+      if (def.id === openID) { head.setAttribute('aria-expanded', 'true'); panel.hidden = false; }
     });
+
+    // Adding a step is part of the list, not a control off to one side.
+    const addRow = document.createElement('li');
+    addRow.className = 'anchor-add';
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'button tiny';
+    const full = state.preset.anchors.length >= MAX_STEPS;
+    addBtn.textContent = full ? `Twelve steps is the limit` : 'Add a step';
+    addBtn.disabled = full;
+    addBtn.addEventListener('click', () => {
+      const id = addStep();
+      if (id) {
+        pendingOpenID = id;
+        // Straight into naming it, which is the first thing anyone wants.
+        pendingFocus = { kind: 'name', id };
+        announce('Step added. Its name is ready to edit.');
+      }
+    });
+    addRow.appendChild(addBtn);
+    list.appendChild(addRow);
+
+
   }
+
+  /* One control builder for every editable value, so they behave identically:
+     a labelled range, a live readout, and a write straight into the edit map. */
+  function addControl(panel, { label, min, max, step, value, format, onInput, hint, track }) {
+    const row = document.createElement('label');
+    row.className = 'edit-control';
+    const id = `ec-${Math.random().toString(36).slice(2, 9)}`;
+    row.innerHTML =
+      `<span class="ec-label" id="${id}-l">${label}</span>` +
+      `<span class="ec-value" id="${id}-v">${format(value)}</span>`;
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min); input.max = String(max); input.step = String(step);
+    input.value = String(value);
+    if (track) input.style.setProperty('--track', track);
+    input.setAttribute('aria-labelledby', `${id}-l`);
+    input.setAttribute('aria-valuetext', format(value));
+    const out = row.querySelector(`#${id}-v`);
+    input.addEventListener('input', () => {
+      const v = Number(input.value);
+      out.textContent = format(v);
+      input.setAttribute('aria-valuetext', format(v));
+      onInput(v);
+    });
+    row.appendChild(input);
+    if (hint) {
+      const h = document.createElement('span');
+      h.className = 'ec-hint';
+      h.textContent = hint;
+      row.appendChild(h);
+    }
+    panel.appendChild(row);
+    return input;
+  }
+
+  function setEdit(index, patch) {
+    const anchors = withEdits(state.base).anchors.map((a, i) =>
+      (i === index ? { ...a, ...patch } : a));
+    setAnchors(anchors);
+  }
+
+  const nominalMinute = (a) => (a.kind === 'clock' ? a.minute
+    : (a.event === 'sunrise' ? 7 * 60 : 19 * 60) + (a.offset || 0));
+
+  /* A new step goes into the widest gap in the day and inherits the settings
+     already in force there, so adding one refines the shape rather than
+     punching a hole in it. The day is a cycle, so the stretch from the last
+     step back round to the first counts — usually it is the widest of all. */
+  function addStep() {
+    const anchors = withEdits(state.base).anchors.slice();
+    if (anchors.length >= MAX_STEPS) return null;
+
+    let at = 0, widest = -1, source = anchors[0];
+    for (let i = 0; i < anchors.length; i++) {
+      const here = nominalMinute(anchors[i]);
+      const next = anchors[(i + 1) % anchors.length];
+      const span = ((nominalMinute(next) - here) + 1440) % 1440 || 1440;
+      if (span > widest) { widest = span; at = i; source = anchors[i]; }
+    }
+    const minute = Math.round(nominalMinute(anchors[at]) + widest / 2) % 1440;
+    const fresh = {
+      id: nextStepID(),
+      name: uniqueStepName('New step', anchors),
+      kind: 'clock',
+      minute,
+      kelvin: source.kelvin,
+      brightness: source.brightness,
+      fade: 30,
+    };
+    anchors.push(fresh);
+    setAnchors(anchors);
+    return fresh.id;
+  }
+
+  function removeStep(index) {
+    const anchors = withEdits(state.base).anchors.slice();
+    // A schedule with nothing in it has nothing to say; keep at least two.
+    if (anchors.length <= 2) return false;
+    anchors.splice(index, 1);
+    setAnchors(anchors);
+    return true;
+  }
+
+  /* The app shows this name in its menu bar, so two steps sharing one would be
+     confusing there as well as ambiguous here. */
+  function uniqueStepName(wanted, anchors, exceptID) {
+    const taken = new Set(anchors.filter((a) => a.id !== exceptID).map((a) => a.name));
+    let name = wanted.trim() || 'Step';
+    if (!taken.has(name)) return name;
+    for (let n = 2; n < 99; n++) {
+      const candidate = `${name} ${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${name} ${Date.now().toString(36)}`;
+  }
+
+  /* Dragging a slider fires continuously; the day chart is cheap enough to
+     redraw every time, the year field is not. Both are coalesced into the next
+     frame so a drag stays smooth. */
+  /* Set when a redraw should leave a particular step open — after adding one,
+     or after a rename rebuilds the list. */
+  let pendingOpenID = null;
+  /* Adding or removing a step rebuilds the list, which throws away whatever had
+     focus. Where it should land next is decided at the moment of the action and
+     applied once the new list exists. */
+  let pendingFocus = null;
+
+  let refreshQueued = false;
+  function scheduleRefresh() {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    const run = () => { if (!refreshQueued) return; refreshQueued = false; refresh(); };
+    requestAnimationFrame(run);
+    // requestAnimationFrame is throttled whenever the page is not being
+    // painted, and an edit must not be left showing stale numbers because of
+    // it. Whichever fires first wins; run() is idempotent.
+    setTimeout(run, 100);
+  }
+
+  const clockFmt = (m) => E.clockString(((m % 1440) + 1440) % 1440);
+
+  function buildStepControls(panel, i, def) {
+    /* The name is what the app puts in its menu bar, so it is worth being able
+       to set. Renaming commits on blur rather than per keystroke, which keeps
+       the uniqueness fix-up from fighting the person typing. */
+    const nameRow = document.createElement('label');
+    nameRow.className = 'edit-control edit-name';
+    const nameLabel = document.createElement('span');
+    nameLabel.className = 'ec-label';
+    nameLabel.textContent = 'Name';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'ec-text';
+    nameInput.value = def.name;
+    nameInput.maxLength = 40;
+    nameInput.spellcheck = false;
+    nameInput.autocomplete = 'off';
+    const commitName = () => {
+      const wanted = nameInput.value.trim();
+      if (!wanted || wanted === def.name) { nameInput.value = def.name; return; }
+      const unique = uniqueStepName(wanted, state.preset.anchors, def.id);
+      nameInput.value = unique;
+      pendingOpenID = def.id;
+      setEdit(i, { name: unique });
+    };
+    nameInput.addEventListener('blur', commitName);
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameInput.blur(); }
+      if (e.key === 'Escape') { nameInput.value = def.name; nameInput.blur(); }
+    });
+    nameRow.append(nameLabel, nameInput);
+    panel.appendChild(nameRow);
+
+    if (def.kind === 'clock') {
+      addControl(panel, {
+        label: 'Time', min: 0, max: 1435, step: 5, value: def.minute,
+        format: clockFmt, onInput: (v) => setEdit(i, { minute: v }),
+      });
+    } else {
+      const eventName = def.event === 'sunrise' ? 'sunrise' : 'sunset';
+      addControl(panel, {
+        label: `Offset from ${eventName}`, min: -120, max: 120, step: 5, value: def.offset || 0,
+        format: (v) => (v === 0 ? `at ${eventName}` : `${v > 0 ? '+' : '−'}${Math.abs(v)} min`),
+        onInput: (v) => setEdit(i, { offset: v }),
+      });
+      if (def.earliest != null) {
+        addControl(panel, {
+          label: 'Never before', min: 0, max: 1435, step: 15, value: def.earliest,
+          format: clockFmt, onInput: (v) => setEdit(i, { earliest: v }),
+          hint: 'Stops a summer sunrise arriving absurdly early.',
+        });
+      }
+      if (def.latest != null) {
+        addControl(panel, {
+          label: 'Never after', min: 0, max: 1435, step: 15, value: def.latest,
+          format: clockFmt, onInput: (v) => setEdit(i, { latest: v }),
+          hint: 'Stops a midwinter sunset dimming your screen mid-afternoon.',
+        });
+      }
+    }
+    const rgb = (k, b) => `rgb(${tintColour(k, b).join(',')})`;
+    const ramp = (stops) => `linear-gradient(90deg, ${stops.join(', ')})`;
+    addControl(panel, {
+      label: 'Warmth', min: C.normalRange[0], max: C.normalRange[1], step: 50, value: def.kelvin,
+      format: (v) => `${v} K`, onInput: (v) => setEdit(i, { kelvin: v }),
+      // The track is the colour range it selects from, not a decoration.
+      track: ramp([0, 0.25, 0.5, 0.75, 1].map((t) =>
+        rgb(C.normalRange[0] + t * (C.normalRange[1] - C.normalRange[0]), def.brightness))),
+    });
+    addControl(panel, {
+      label: 'Brightness', min: Math.round(C.dimmingFloor * 100), max: 100, step: 1,
+      value: Math.round(def.brightness * 100),
+      format: (v) => `${v}%`, onInput: (v) => setEdit(i, { brightness: v / 100 }),
+      hint: 'Software dimming — it darkens what is drawn, not the backlight.',
+      track: ramp([rgb(def.kelvin, C.dimmingFloor), rgb(def.kelvin, 1)]),
+    });
+    addControl(panel, {
+      label: 'Fade in over', min: 0, max: 120, step: 5, value: def.fade,
+      format: (v) => (v === 0 ? 'no fade' : `${v} min`), onInput: (v) => setEdit(i, { fade: v }),
+    });
+
+    const foot = document.createElement('div');
+    foot.className = 'edit-step-foot';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'button tiny danger';
+    remove.textContent = 'Remove this step';
+    // Two steps are the fewest that still describe a change over a day.
+    remove.disabled = state.preset.anchors.length <= 2;
+    if (remove.disabled) remove.title = 'A schedule needs at least two steps.';
+    remove.addEventListener('click', () => {
+      const name = def.name;
+      if (removeStep(i)) {
+        // The panel that held this button is gone; land somewhere real.
+        pendingFocus = { kind: 'add' };
+        announce(`${name} removed.`);
+      }
+    });
+    foot.appendChild(remove);
+    panel.appendChild(foot);
+  }
+
+  /* Adding and removing happen without moving focus anywhere obvious, so the
+     change is spoken rather than only drawn. */
+  let liveRegion = null;
+  function announce(message) {
+    if (!liveRegion) {
+      liveRegion = document.createElement('p');
+      liveRegion.className = 'visually-hidden';
+      liveRegion.setAttribute('role', 'status');
+      liveRegion.setAttribute('aria-live', 'polite');
+      document.body.appendChild(liveRegion);
+    }
+    liveRegion.textContent = message;
+  }
+
+  // --------------------------------------------------------- the year view
+
+  const ribbon = $('ribbon');
+  const ribbonField = $('ribbon-field');
+  const ribbonHours = $('ribbon-hours');
+  const ribbonMonths = $('ribbon-months');
+  const yearScrub = $('year-scrub');
+  const yearTodayBtn = $('year-today');
+  const RW = 1000, RH = 220, RPAD_B = 22, RPAD_T = 6;
+  const rplot = RH - RPAD_T - RPAD_B;
+  const MONTH_LABEL_MIN = 480;
+  let lastEveryMonth = null;
+  const rx = (i, days) => (i / (days - 1)) * RW;
+  const ry = (minute) => RPAD_T + (minute / DAY) * rplot;
+
+  /* The colour a display actually takes is the neutral white multiplied by the
+     channel gains for that kelvin, then dimmed. Gains cost real arithmetic and
+     a year holds only a few hundred distinct kelvins, so they are memoised. */
+  const FIELD_ROWS = 192;
+  const FIELD_BASE = 228;
+
+  /* Channel gains scale light, not sRGB numbers. Multiplying encoded values
+     directly would exaggerate the tint badly — a 2800 K night came out a lurid
+     rgb(160,74,19) instead of the sand it really is — so the base is decoded to
+     linear light, scaled, and re-encoded. Both directions are tabulated because
+     this runs about seventy thousand times per redraw. */
+  const SRGB_TO_LINEAR = new Float64Array(256);
+  for (let i = 0; i < 256; i++) {
+    const v = i / 255;
+    SRGB_TO_LINEAR[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }
+  const ENCODE_STEPS = 4096;
+  const LINEAR_TO_SRGB = new Uint8ClampedArray(ENCODE_STEPS + 1);
+  for (let i = 0; i <= ENCODE_STEPS; i++) {
+    const l = i / ENCODE_STEPS;
+    const v = l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
+    LINEAR_TO_SRGB[i] = Math.round(v * 255);
+  }
+  const encode = (l) => LINEAR_TO_SRGB[l <= 0 ? 0 : (l >= 1 ? ENCODE_STEPS : (l * ENCODE_STEPS) | 0)];
+
+  /* The colour a screen actually shows at a given setting. The day chart, its
+     track legend and the year field all draw from this one function so the
+     demo speaks a single colour language. */
+  function tintColour(kelvin, brightness) {
+    const g = cachedGains(kelvin);
+    const lin = SRGB_TO_LINEAR[FIELD_BASE] * brightness;
+    return [encode(lin * g[0]), encode(lin * g[1]), encode(lin * g[2])];
+  }
+
+  const gainCache = new Map();
+  function cachedGains(kelvin) {
+    const key = Math.round(kelvin / 5);
+    let g = gainCache.get(key);
+    if (!g) { g = E.channelGains(key * 5); gainCache.set(key, g); }
+    return g;
+  }
+
+  /* The field depends only on the preset, the city and the year — not on the
+     day or minute being previewed — so the once-a-minute tick and every scrub
+     reuse the painted canvas instead of recomputing seventy thousand pixels. */
+  let fieldKey = null;
+
+  function paintField(p) {
+    const key = `${state.preset.name}|${editSignature(state.base)}|${state.city ? state.city.name : ''}|${state.year}`;
+    if (key === fieldKey) return;
+    const ctx = ribbonField.getContext('2d');
+    if (!ctx) return;
+    ribbonField.width = p.length;
+    ribbonField.height = FIELD_ROWS;
+    const img = ctx.createImageData(p.length, FIELD_ROWS);
+    const data = img.data;
+    // Days whose steps land identically — a clamped midwinter run, or any
+    // fixed-clock preset — share a column instead of recomputing it.
+    const columns = new Map();
+    for (let x = 0; x < p.length; x++) {
+      const anchors = p[x].anchors;
+      const sig = anchors.map((a) => `${a.minute}:${a.kelvin}:${a.brightness}:${a.fade}`).join('|');
+      let col = columns.get(sig);
+      if (!col) {
+        col = new Uint8ClampedArray(FIELD_ROWS * 3);
+        for (let y = 0; y < FIELD_ROWS; y++) {
+          const st = E.evaluate(anchors, (y / FIELD_ROWS) * DAY);
+          const t = tintColour(st.kelvin, st.brightness);
+          col[y * 3] = t[0]; col[y * 3 + 1] = t[1]; col[y * 3 + 2] = t[2];
+        }
+        columns.set(sig, col);
+      }
+      for (let y = 0; y < FIELD_ROWS; y++) {
+        const o = (y * p.length + x) * 4;
+        data[o] = col[y * 3];
+        data[o + 1] = col[y * 3 + 1];
+        data[o + 2] = col[y * 3 + 2];
+        data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    fieldKey = key;
+
+    /* Fill the legend from the same numbers, so the key always shows the two
+       ends of the field this preset actually produces. */
+    const all = p[0].anchors;
+    if (all.length) {
+      const warmest = all.reduce((a, b) => (b.kelvin < a.kelvin ? b : a));
+      const swatchOf = (k, b) => `rgb(${tintColour(k, b).join(', ')})`;
+      const legend = $('ribbon-legend');
+      legend.style.setProperty('--key-warm', swatchOf(warmest.kelvin, warmest.brightness));
+      legend.style.setProperty('--key-neutral', swatchOf(E.constants.neutralKelvin, 1));
+    }
+    // Line the canvas up with the plot area the SVG draws into.
+    ribbonField.style.top = `${(RPAD_T / RH) * 100}%`;
+    ribbonField.style.height = `${(rplot / RH) * 100}%`;
+  }
+
+  function drawRibbon() {
+    while (ribbon.firstChild) ribbon.removeChild(ribbon.firstChild);
+    ribbonHours.textContent = '';
+    ribbonMonths.textContent = '';
+    const p = state.profile;
+    const wrap = $('demo-year');
+
+    if (!p.length) {
+      // Without a city there is no sun to plot, and inventing one would be
+      // worse than saying so.
+      wrap.classList.add('is-empty');
+      $('year-sub').textContent = 'Choose a city above and this fills in with your own sunrise and sunset for every day of the year.';
+      $('year-date').textContent = '—';
+      $('year-sun').textContent = 'no city chosen';
+      $('year-note').textContent = '';
+      $('ribbon-desc').textContent = 'A year view of the schedule\u2019s colour against sunrise and sunset, available once a city is chosen.';
+      yearScrub.disabled = true;
+      ribbonField.hidden = true;
+      return;
+    }
+    ribbonField.hidden = false;
+    paintField(p);
+    wrap.classList.remove('is-empty');
+    yearScrub.disabled = false;
+    yearScrub.max = String(p.length - 1);
+    $('year-sub').textContent = `Every day of ${state.year} in ${state.city.name}, painted with the colour this schedule would apply. Drag to move through the year.`;
+
+    /* The field below already carries the schedule's colour, so the sun is
+       drawn as two lines rather than a filled band — that keeps the colour
+       visible and states sunrise and sunset more precisely than an edge.
+       Runs of consecutive ordinary days are drawn separately, so a stretch of
+       polar day or polar night breaks the line rather than being bridged
+       across with a segment that would imply a sunrise that never happened. */
+    let run = [];
+    const flushRun = () => {
+      if (run.length < 2) { run = []; return; }
+      ['sunrise', 'sunset'].forEach((which) => {
+        const d = `M ${run.map((e) => `${rx(e.index, p.length).toFixed(1)} ${ry(e[which]).toFixed(1)}`).join(' L ')}`;
+        // A pale under-stroke first, so the line reads where it crosses the
+        // boundary between the warm hours and the neutral ones.
+        ['ribbon-sun-halo', 'ribbon-sun'].forEach((cls) => {
+          const path = document.createElementNS(NS, 'path');
+          path.setAttribute('d', d);
+          path.setAttribute('class', cls);
+          ribbon.appendChild(path);
+        });
+      });
+      run = [];
+    };
+    p.forEach((e) => {
+      const ordinary = typeof e.sunrise === 'number' && typeof e.sunset === 'number';
+      if (ordinary) { run.push(e); return; }
+      flushRun();
+      const band = document.createElementNS(NS, 'rect');
+      band.setAttribute('x', rx(e.index, p.length) - (RW / p.length) / 2);
+      band.setAttribute('y', RPAD_T);
+      band.setAttribute('width', Math.max(RW / p.length, 1.2));
+      band.setAttribute('height', rplot);
+      band.setAttribute('class', e.sunrise === E.POLAR_DAY ? 'ribbon-polar-day' : 'ribbon-polar-night');
+      ribbon.appendChild(band);
+    });
+    flushRun();
+
+    // Hour grid, every six hours.
+    for (let h = 6; h < 24; h += 6) {
+      const gy = ry(h * 60);
+      const g = document.createElementNS(NS, 'line');
+      g.setAttribute('x1', 0); g.setAttribute('x2', RW);
+      g.setAttribute('y1', gy); g.setAttribute('y2', gy);
+      g.setAttribute('class', 'ribbon-grid');
+      ribbon.appendChild(g);
+      const t = document.createElement('span');
+      t.style.top = `${(gy / RH) * 100}%`;
+      t.textContent = h === 12 ? 'noon' : `${h}:00`;
+      ribbonHours.appendChild(t);
+    }
+
+    /* Each anchor traced across the year. Where a clamp holds it away from the
+       sun the line goes flat and changes colour — which is the entire argument
+       for having clamps, made visible. */
+    const anchorNames = [...new Set(p[0].anchors.map((a) => a.name))];
+    anchorNames.forEach((name) => {
+      let seg = [];
+      const flush = (clamped) => {
+        if (seg.length < 2) { seg = []; return; }
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', seg.map((pt, i) => `${i ? 'L' : 'M'} ${pt[0].toFixed(1)} ${pt[1].toFixed(1)}`).join(' '));
+        path.setAttribute('class', 'ribbon-anchor' + (clamped ? ' is-clamped' : ''));
+        ribbon.appendChild(path);
+        seg = [];
+      };
+      let mode = null;
+      p.forEach((e) => {
+        const a = e.anchors.find((x) => x.name === name);
+        if (!a) { flush(mode); mode = null; return; }
+        const clamped = a.origin === 'clamped-early' || a.origin === 'clamped-late';
+        if (mode === null) mode = clamped;
+        if (clamped !== mode) {
+          const carry = seg[seg.length - 1];
+          flush(mode);
+          mode = clamped;
+          if (carry) seg.push(carry);
+        }
+        seg.push([rx(e.index, p.length), ry(a.minute)]);
+      });
+      flush(mode);
+    });
+
+    /* Month boundaries and labels. Twelve labels need roughly 40px each; below
+       that they collide, so narrow layouts name every second month. The grid
+       lines stay — the divisions are still legible without a word on each. */
+    const everyMonth = ribbon.clientWidth >= MONTH_LABEL_MIN;
+    lastEveryMonth = everyMonth;
+    let lastMonth = null;
+    p.forEach((e) => {
+      if (e.month === lastMonth) return;
+      lastMonth = e.month;
+      const mx = rx(e.index, p.length);
+      if (e.index > 0) {
+        const l = document.createElementNS(NS, 'line');
+        l.setAttribute('x1', mx); l.setAttribute('x2', mx);
+        l.setAttribute('y1', RPAD_T); l.setAttribute('y2', RH - RPAD_B);
+        l.setAttribute('class', 'ribbon-grid');
+        ribbon.appendChild(l);
+      }
+      if (!everyMonth && e.month % 2 === 0) return;
+      const t = document.createElement('span');
+      t.style.left = `${(mx / RW) * 100}%`;
+      t.textContent = E.MONTH_SHORT[e.month - 1];
+      ribbonMonths.appendChild(t);
+    });
+
+    const frame = document.createElementNS(NS, 'rect');
+    frame.setAttribute('x', 0.5); frame.setAttribute('y', RPAD_T);
+    frame.setAttribute('width', RW - 1); frame.setAttribute('height', rplot);
+    frame.setAttribute('rx', 5);
+    frame.setAttribute('class', 'ribbon-frame');
+    ribbon.appendChild(frame);
+
+    const todayIdx = E.dayIndex(new Date(), state.year);
+    const today = document.createElementNS(NS, 'line');
+    today.setAttribute('x1', rx(todayIdx, p.length)); today.setAttribute('x2', rx(todayIdx, p.length));
+    today.setAttribute('y1', RPAD_T); today.setAttribute('y2', RH - RPAD_B);
+    today.setAttribute('class', 'ribbon-today');
+    ribbon.appendChild(today);
+
+    const cursor = document.createElementNS(NS, 'line');
+    cursor.setAttribute('id', 'ribbon-cursor');
+    cursor.setAttribute('y1', RPAD_T - 4); cursor.setAttribute('y2', RH - RPAD_B);
+    cursor.setAttribute('class', 'ribbon-cursor');
+    ribbon.appendChild(cursor);
+
+    // Only show the polar keys where the city actually has polar days, so the
+    // legend describes this chart rather than charts in general.
+    const hasPolar = p.some((e) => typeof e.sunrise !== 'number');
+    document.querySelectorAll('.polar-key').forEach((el) => { el.hidden = !hasPolar; });
+
+    setYearGradient();
+    describeRibbon();
+  }
+
+  /* The year scrubber's track carries the same day/night story as the ribbon,
+     so the control reads as part of the picture. */
+  function setYearGradient() {
+    const p = state.profile;
+    if (!p.length) return;
+    const stops = [];
+    const steps = 24;
+    for (let i = 0; i <= steps; i++) {
+      const e = p[Math.min(Math.round((i / steps) * (p.length - 1)), p.length - 1)];
+      const daylight = (typeof e.sunrise === 'number' && typeof e.sunset === 'number')
+        ? (e.sunset - e.sunrise) / DAY
+        : (e.sunrise === E.POLAR_DAY ? 1 : 0);
+      const a = 0.15 + daylight * 0.75;
+      stops.push(`rgba(158, 189, 224, ${a.toFixed(2)}) ${((i / steps) * 100).toFixed(1)}%`);
+    }
+    stage.style.setProperty('--year-gradient', `linear-gradient(90deg, ${stops.join(', ')})`);
+  }
+
+  function describeRibbon() {
+    const p = state.profile;
+    if (!p.length) return;
+    const lengths = p.map((e) => (typeof e.sunrise === 'number' && typeof e.sunset === 'number')
+      ? e.sunset - e.sunrise : (e.sunrise === E.POLAR_DAY ? DAY : 0));
+    const longest = p[lengths.indexOf(Math.max(...lengths))];
+    const shortest = p[lengths.indexOf(Math.min(...lengths))];
+    const fmt = (e) => `${e.day} ${E.MONTH_SHORT[e.month - 1]}`;
+    const hours = (m) => `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`;
+    $('ribbon-desc').textContent =
+      `Daylight through ${state.year} in ${state.city.name}. Longest day ${fmt(longest)} at ${hours(Math.max(...lengths))}; ` +
+      `shortest ${fmt(shortest)} at ${hours(Math.min(...lengths))}. ` +
+      `The background is the colour the ${state.preset.name} schedule would put on screen at each moment of each day, ` +
+      `warmest at night and neutral by day, with the schedule's steps drawn across it and highlighted where a limit holds one away from the sun.`;
+  }
+
+  /* The sentence under the ribbon says what today's date actually means for
+     this schedule — the clamp, the polar case, or simply the day length. */
+  function updateYearNote() {
+    const note = $('year-note');
+    const p = state.profile;
+    if (!p.length) { note.textContent = ''; return; }
+    const e = p[state.dayIndex];
+    if (!e) { note.textContent = ''; return; }
+
+    const clamped = e.anchors.filter((a) => a.origin === 'clamped-early' || a.origin === 'clamped-late');
+    if (e.sunrise === E.POLAR_DAY) {
+      note.innerHTML = `<span class="flag">The sun does not set</span> in ${state.city.name} on this date, so the schedule falls back to fixed times rather than waiting for a sunset that never comes.`;
+    } else if (e.sunrise === E.POLAR_NIGHT) {
+      note.innerHTML = `<span class="flag">The sun does not rise</span> in ${state.city.name} on this date. The schedule uses fixed times instead.`;
+    } else if (clamped.length) {
+      const a = clamped[0];
+      note.innerHTML = `Sunset is at <strong>${E.clockString(e.sunset)}</strong>, but “${a.name}” is <span class="flag">held at ${E.clockString(a.minute)}</span> — the limit that stops a midwinter schedule from dimming your screen in the afternoon.`;
+    } else {
+      const len = e.sunset - e.sunrise;
+      note.innerHTML = `<strong>${Math.floor(len / 60)}h ${Math.round(len % 60)}m</strong> of daylight, sunrise ${E.clockString(e.sunrise)} to sunset ${E.clockString(e.sunset)}.`;
+    }
+  }
+
+  function setDay(index, userDriven) {
+    const p = state.profile;
+    const max = p.length ? p.length - 1 : 364;
+    state.dayIndex = Math.max(0, Math.min(Math.round(index), max));
+    const todayIdx = E.dayIndex(new Date(), state.year);
+    state.onToday = state.dayIndex === todayIdx;
+    if (userDriven) yearTodayBtn.hidden = state.onToday;
+
+    yearScrub.value = String(state.dayIndex);
+    state.anchors = E.resolveAnchors(state.preset, state.city, selectedDate());
+
+    const e = p[state.dayIndex];
+    if (e) {
+      $('year-date').textContent = `${e.day} ${E.MONTH_SHORT[e.month - 1]}`;
+      $('year-sun').textContent = (typeof e.sunrise === 'number' && typeof e.sunset === 'number')
+        ? `${E.clockString(e.sunrise)} – ${E.clockString(e.sunset)}`
+        : (e.sunrise === E.POLAR_DAY ? 'no sunset' : 'no sunrise');
+      yearScrub.setAttribute('aria-valuetext',
+        `${e.day} ${E.MONTH_SHORT[e.month - 1]}, ${$('year-sun').textContent}`);
+    }
+    const cursor = $('ribbon-cursor');
+    if (cursor && p.length) {
+      const cx = rx(state.dayIndex, p.length);
+      cursor.setAttribute('x1', cx); cursor.setAttribute('x2', cx);
+    }
+    updateYearNote();
+    draw();
+    paint(state.minute);
+  }
+
+  yearScrub.addEventListener('input', () => setDay(Number(yearScrub.value), true));
+  yearTodayBtn.addEventListener('click', () => {
+    setDay(E.dayIndex(new Date(), state.year), true);
+    yearTodayBtn.hidden = true;
+    yearScrub.focus();
+  });
+
+  // Dragging on the ribbon itself is the obvious gesture, so it works too.
+  let ribbonDragging = false;
+  const ribbonToDay = (clientX) => {
+    const r = ribbon.getBoundingClientRect();
+    const frac = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
+    return Math.round(frac * Math.max(state.profile.length - 1, 1));
+  };
+  const onRibbonMove = (e) => {
+    if (!ribbonDragging || !state.profile.length) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    setDay(ribbonToDay(x), true);
+  };
+  ribbon.addEventListener('pointerdown', (e) => {
+    if (!state.profile.length) return;
+    ribbonDragging = true;
+    ribbon.setPointerCapture?.(e.pointerId);
+    setDay(ribbonToDay(e.clientX), true);
+  });
+  ribbon.addEventListener('pointermove', onRibbonMove);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) =>
+    ribbon.addEventListener(ev, () => { ribbonDragging = false; }));
 
   // ------------------------------------------------------------ painting
 
@@ -373,23 +1502,190 @@
     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setCompare(!state.comparing); }
   });
 
+  // -------------------------------------------------- the precedence ladder
+
+  /* The section above this claims Daylight can always say why your screen looks
+     the way it does. Rather than print example sentences, the page runs the
+     app's own resolver: assets/policy.js is a port of PrecedenceResolver, and
+     Scripts/verify-site-policy.sh diffs the two across all 64 combinations.
+
+     The layers and their order come from the app. The little schedules and
+     rules hung on them are examples — the resolver needs something to decide
+     between — and the copy beside the ladder says so. */
+  const LADDER_CASES = {
+    baseSchedule:     { label: 'Balanced',    kelvin: 3200, dimming: 0.82, note: 'a schedule, warm by evening' },
+    workspaceProfile: { label: 'Home desk',   kelvin: 4000, dimming: null, note: 'where you are working' },
+    activityRule:     { label: 'Colour Work', kelvin: 6500, dimming: null, note: 'an app that needs true colour' },
+    manualOverride:   { label: 'Manual',      kelvin: null, dimming: 0.60, note: 'you reached for the slider' },
+    userPause:        { label: 'Paused',      kelvin: 6500, dimming: 1,    note: 'paused until you resume' },
+    emergencyRestore: { label: 'Restored',    kelvin: 6500, dimming: 1,    note: 'restore normal output' },
+  };
+
+  function setUpLadder() {
+    const P = window.DaylightPolicy;
+    const list = $('ladder');
+    if (!list) return;
+    /* policy.js is its own request and can fail on its own. An empty ladder
+       under a heading promising you can switch layers on is a worse outcome
+       than saying plainly that this part did not load. */
+    if (!P) {
+      const demo = document.querySelector('.ladder-demo');
+      if (!demo) return;
+      const body = demo.querySelector('.ladder-body');
+      if (body) body.remove();
+      const note = document.createElement('p');
+      note.className = 'demo-unavailable';
+      note.setAttribute('role', 'status');
+      note.textContent = 'The interactive ladder could not start — a script did not load. '
+        + 'Reloading usually fixes it. The three points below still describe how it works.';
+      demo.appendChild(note);
+      return;
+    }
+
+    const layers = (window.DAYLIGHT_DATA.layers || P.LAYERS)
+      .slice().sort((a, b) => b.rank - a.rank);   // highest first: the top wins
+    const active = new Set(['baseSchedule', 'activityRule']);
+    const rows = new Map();
+
+    layers.forEach((layer) => {
+      const demo = LADDER_CASES[layer.key];
+      if (!demo) return;
+
+      const li = document.createElement('li');
+      li.className = 'ladder-row';
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = active.has(layer.key);
+      box.addEventListener('change', () => {
+        if (box.checked) active.add(layer.key); else active.delete(layer.key);
+        renderLadder();
+      });
+
+      /* Name and what it proposes read as one phrase, so they share a cell —
+         keeping them as separate grid items put them in different columns and
+         let the "wins" pill collide with them. */
+      const main = document.createElement('span');
+      main.className = 'ladder-main';
+      const name = document.createElement('span');
+      name.className = 'ladder-name';
+      name.textContent = layer.name;
+      const says = document.createElement('span');
+      says.className = 'ladder-says';
+      const sets = [demo.kelvin != null && 'warmth', demo.dimming != null && 'brightness']
+        .filter(Boolean).join(' + ');
+      says.textContent = `“${demo.label}” · sets ${sets}`;
+      main.append(name, says);
+
+      const note = document.createElement('span');
+      note.className = 'ladder-note';
+      note.textContent = demo.note;
+
+      const wins = document.createElement('span');
+      wins.className = 'ladder-wins';
+
+      label.append(box, main, wins, note);
+      li.appendChild(label);
+      list.appendChild(li);
+      rows.set(layer.key, { li, wins });
+    });
+
+    function renderLadder() {
+      const proposals = layers
+        .filter((l) => active.has(l.key))
+        .map((l) => ({
+          layer: l.key,
+          label: LADDER_CASES[l.key].label,
+          target: { kelvin: LADDER_CASES[l.key].kelvin, dimming: LADDER_CASES[l.key].dimming },
+        }));
+      const r = P.resolve(proposals, C.neutralKelvin);
+      const nameOf = (key) => (layers.find((l) => l.key === key) || {}).name || key;
+
+      rows.forEach((row, key) => {
+        const on = active.has(key);
+        const won = [];
+        if (on && r.temperatureFrom.layer === key) won.push('warmth');
+        if (on && r.dimmingFrom.layer === key) won.push('brightness');
+        row.li.classList.toggle('is-off', !on);
+        row.li.classList.toggle('is-winning', won.length > 0);
+        row.wins.textContent = won.length ? `wins ${won.join(' + ')}` : '';
+      });
+
+      const result = $('ladder-result');
+      result.textContent = '';
+      const swatch = document.createElement('span');
+      swatch.className = 'ladder-swatch';
+      swatch.style.background = `rgb(${tintColour(r.target.kelvin, r.target.dimming).join(',')})`;
+      swatch.setAttribute('aria-hidden', 'true');
+      result.appendChild(swatch);
+
+      const facts = document.createElement('div');
+      facts.className = 'ladder-facts';
+      const add = (what, value, from) => {
+        const row = document.createElement('div');
+        const a = document.createElement('span'); a.className = 'lf-what'; a.textContent = what;
+        const b = document.createElement('span'); b.className = 'lf-value'; b.textContent = value;
+        const c = document.createElement('span'); c.className = 'lf-from'; c.textContent = `from ${from}`;
+        row.append(a, b, c);
+        facts.appendChild(row);
+      };
+      add('Warmth', `${Math.round(r.target.kelvin)} K`,
+          proposals.length ? nameOf(r.temperatureFrom.layer) : 'nothing — neutral');
+      add('Brightness', `${Math.round(r.target.dimming * 100)}%`,
+          proposals.length ? nameOf(r.dimmingFrom.layer) : 'nothing — full');
+      result.appendChild(facts);
+
+      $('ladder-explanation').textContent = proposals.length
+        ? r.explanation
+        : 'Nothing is asking for anything, so your display is left alone.';
+    }
+
+    renderLadder();
+  }
+
+  setUpLadder();
+
   // ------------------------------------------------------------ start up
 
+  loadEdits();
+  applySharedSchedule();
+  /* Pasting a link into an already-open page changes only the fragment, which
+     does not reload anything — so the schedule has to be picked up here too. */
+  window.addEventListener('hashchange', () => {
+    if (applySharedSchedule()) refresh();
+  });
   state.city = guessCity();
   if (state.city) citySelect.value = `${state.city.name}|${state.city.region}`;
-  recompute();
-  draw();
+  state.dayIndex = E.dayIndex(new Date(), state.year);
+  // Edits kept from a previous visit have to be in force before the first
+  // draw, not only after the next preset click.
+  refresh();
+
+  /* The ribbon itself is resolution-independent, but how many months can be
+     named is not — redraw only when the width crosses that threshold. */
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => {
+      if (lastEveryMonth === null) return;
+      if ((ribbon.clientWidth >= MONTH_LABEL_MIN) !== lastEveryMonth) drawRibbon();
+    }).observe(ribbon);
+  }
+  setDay(state.dayIndex, false);
   setMinute(nowMinute(), false);
   nowButton.hidden = true;
+  yearTodayBtn.hidden = true;
   updateSun();
   presetHolder.querySelectorAll('.preset-chip').forEach((c, i) => { c.tabIndex = i === 0 ? 0 : -1; });
 
   // Keep following the clock until the visitor takes over. Anchors are
   // recomputed too, so a solar schedule stays right across midnight.
   setInterval(() => {
-    if (!state.following) return;
+    // Only follow the clock while the visitor is still on today and has not
+    // taken over the time-of-day scrubber.
+    if (!state.following || !state.onToday) return;
     recompute();
     draw();
+    drawRibbon();
+    setDay(E.dayIndex(new Date(), state.year), false);
     setMinute(nowMinute(), false);
     updateSun();
   }, 60000);

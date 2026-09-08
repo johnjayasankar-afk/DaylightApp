@@ -12,7 +12,16 @@
 (() => {
   'use strict';
 
-  const C = window.DAYLIGHT_DATA.constants;
+  /* data.js is a separate request and can fail on its own. Throwing here
+     would be an uncaught TypeError with nothing to explain it, so the engine
+     simply declines to exist and the page reports that instead. */
+  const DATA = window.DAYLIGHT_DATA;
+  if (!DATA || !DATA.constants || !DATA.presets) {
+    window.DAYLIGHT_ENGINE_MISSING = 'the preset data did not load';
+    return;
+  }
+
+  const C = DATA.constants;
   const DAY = 24 * 60;
 
   // ------------------------------------------------------------- colour
@@ -180,8 +189,23 @@
      Solar anchors carry earliest/latest clamps, which is what keeps a
      sun-following schedule sensible in midwinter and midsummer without being
      re-tuned twice a year. */
+  /* Anchors landing within this window of each other are treated as a
+     conflict and the lower-priority one is dropped — matching
+     ScheduleResolver.mergeWindowSeconds in the app. It matters most exactly
+     where this page is now looking: at high latitude a clamped sunset can be
+     pushed onto a clock anchor, and without this the two would both appear. */
+  const MERGE_WINDOW_MINUTES = 15;
+
+  /* An explicit clock time is more authoritative than an astronomical event,
+     and a clamped solar anchor more than a free one. Same order as the app. */
+  function anchorPriority(a) {
+    if (a.origin === 'clock') return 2;
+    if (a.origin === 'clamped-early' || a.origin === 'clamped-late') return 1;
+    return 0;
+  }
+
   function resolveAnchors(preset, city, when = new Date()) {
-    return preset.anchors.map((a) => {
+    const resolved = preset.anchors.map((a) => {
       if (a.kind === 'clock') {
         return { ...a, minute: a.minute, origin: 'clock' };
       }
@@ -199,7 +223,22 @@
       if (a.earliest != null && shifted < a.earliest) return { ...a, minute: a.earliest, origin: 'clamped-early', solar: raw };
       if (a.latest != null && shifted > a.latest) return { ...a, minute: a.latest, origin: 'clamped-late', solar: raw };
       return { ...a, minute: shifted, origin: 'solar', solar: raw };
-    }).sort((p, q) => p.minute - q.minute);
+    });
+
+    resolved.sort((p, q) => (p.minute !== q.minute)
+      ? p.minute - q.minute
+      : anchorPriority(q) - anchorPriority(p));
+
+    const kept = [];
+    for (const candidate of resolved) {
+      const last = kept[kept.length - 1];
+      if (last && candidate.minute - last.minute < MERGE_WINDOW_MINUTES) {
+        if (anchorPriority(candidate) > anchorPriority(last)) kept[kept.length - 1] = candidate;
+      } else {
+        kept.push(candidate);
+      }
+    }
+    return kept;
   }
 
   function clamp(minute, a) {
@@ -240,11 +279,61 @@
     return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   };
 
+  // ------------------------------------------------------------- the year
+
+  /* Sunrise and sunset for one date in a city, on that city's own clock.
+     Probed at noon so the calendar date is never ambiguous at the boundaries,
+     and the zone offset is read for that date so daylight saving is handled by
+     the browser's time-zone database rather than assumed. */
+  function solarForDate(city, date) {
+    const { year, month, day } = dateInZone(city.tz, date);
+    const offsetMinutes = zoneOffsetMinutes(city.tz, date);
+    const at = (kind) => solarEvent(kind, { year, month, day, lat: city.lat, lon: city.lon, offsetMinutes });
+    return { sunrise: at('sunrise'), sunset: at('sunset'), year, month, day };
+  }
+
+  /* A whole year of sunrise, sunset, and resolved schedule anchors.
+     This is what makes the clamps and the polar cases visible: on a single day
+     a sun-following schedule looks like any other, and the interesting
+     behaviour only shows up across the seasons. */
+  function yearProfile(preset, city, year) {
+    const out = [];
+    if (!city) return out;
+    const days = isLeap(year) ? 366 : 365;
+    for (let i = 0; i < days; i++) {
+      // Noon UTC on each day, then read the city's own calendar date from it.
+      const date = new Date(Date.UTC(year, 0, 1 + i, 12, 0, 0));
+      const sun = solarForDate(city, date);
+      out.push({
+        index: i,
+        date,
+        month: sun.month,
+        day: sun.day,
+        sunrise: sun.sunrise,
+        sunset: sun.sunset,
+        anchors: resolveAnchors(preset, city, date),
+      });
+    }
+    return out;
+  }
+
+  const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+  const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  /* Index into the year for a given date, matching yearProfile's ordering. */
+  function dayIndex(date, year) {
+    const start = Date.UTC(year, 0, 1, 12, 0, 0);
+    const here = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0);
+    return Math.max(0, Math.min(Math.round((here - start) / 86400000), isLeap(year) ? 365 : 364));
+  }
+
   window.DaylightEngine = {
     DAY, POLAR_DAY, POLAR_NIGHT,
     mired, lerpKelvin, channelGains, swatch,
     solarEvent, zoneOffsetMinutes, dateInZone,
     resolveAnchors, evaluate, clockString,
+    solarForDate, yearProfile, dayIndex, isLeap, MONTH_SHORT,
     presets: window.DAYLIGHT_DATA.presets,
     cities: window.DAYLIGHT_DATA.cities,
     constants: C,

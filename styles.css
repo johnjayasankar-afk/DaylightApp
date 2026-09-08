@@ -29,6 +29,8 @@
   /* The scrubbed moment, adjusted so it stays readable as text. */
   --moment-text:   var(--moment);
   --warn:          #e2a03f;
+  --danger:        #ea8272;          /* removing something, as text */
+  --danger-soft:   rgba(234, 130, 114, 0.14);
 
   --radius:     14px;
   --radius-sm:  9px;
@@ -66,6 +68,8 @@
        The marker and dot keep the true colour — they are graphics, not text. */
     --moment-text:   color-mix(in srgb, var(--moment) 42%, #14161a);
     --warn:          #9a6a12;
+    --danger:        #a8341f;
+    --danger-soft:   rgba(168, 52, 31, 0.10);
   }
 }
 
@@ -137,6 +141,10 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
    rather than an inline <noscript><style>, which keeps the page's
    Content-Security-Policy free of 'unsafe-inline'. */
 .no-js .hero-demo { display: none; }
+/* One of these two is always the true one. */
+.try-note-fallback { display: none; }
+.no-js .try-note-fallback { display: block; }
+.no-js .try-note:not(.try-note-fallback) { display: none; }
 
 /* Revealing is an enhancement, never a precondition for reading the page.
    The hidden state is scoped to a class that JS adds only once it is certain
@@ -266,28 +274,43 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
 .curve-marker-dot { fill: var(--moment); transition: fill .55s ease; }
 
 .scrub-row { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
-#scrub {
-  flex: 1; appearance: none; height: 22px; background: transparent; cursor: grab;
+/* One slider, used everywhere. Each instance only supplies its own --track,
+   so a control added later cannot arrive looking like a different product. */
+#scrub, #year-scrub, .edit-control input[type="range"] {
+  appearance: none; height: 22px; background: transparent; cursor: grab;
+  --track: var(--hairline-firm, rgba(255,255,255,0.16));
 }
-#scrub:active { cursor: grabbing; }
-#scrub::-webkit-slider-runnable-track {
-  height: 4px; border-radius: 2px;
-  /* Painted from the schedule actually on screen — see setTrackGradient(). */
-  background: var(--day-gradient, linear-gradient(90deg, #9ebde0, #f08c3d));
+#scrub, #year-scrub { flex: 1; }
+#scrub:active, #year-scrub:active, .edit-control input[type="range"]:active { cursor: grabbing; }
+#scrub:focus-visible, #year-scrub:focus-visible,
+.edit-control input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
 }
-#scrub::-webkit-slider-thumb {
+#scrub::-webkit-slider-runnable-track,
+#year-scrub::-webkit-slider-runnable-track,
+.edit-control input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: var(--track);
+}
+#scrub::-webkit-slider-thumb,
+#year-scrub::-webkit-slider-thumb,
+.edit-control input[type="range"]::-webkit-slider-thumb {
   appearance: none; width: 16px; height: 16px; margin-top: -6px;
   border-radius: 50%; background: #fff; border: 1px solid rgba(0,0,0,0.28);
   box-shadow: 0 1px 4px rgba(0,0,0,0.35);
 }
-#scrub::-moz-range-track {
-  height: 4px; border-radius: 2px;
-  background: var(--day-gradient, linear-gradient(90deg, #9ebde0, #f08c3d));
+#scrub::-moz-range-track,
+#year-scrub::-moz-range-track,
+.edit-control input[type="range"]::-moz-range-track {
+  height: 4px; border-radius: 2px; background: var(--track);
 }
-#scrub::-moz-range-thumb {
+#scrub::-moz-range-thumb,
+#year-scrub::-moz-range-thumb,
+.edit-control input[type="range"]::-moz-range-thumb {
   width: 15px; height: 15px; border-radius: 50%; background: #fff;
   border: 1px solid rgba(0,0,0,0.28);
 }
+/* Painted from the schedule actually on screen — see setTrackGradient(). */
+#scrub { --track: var(--day-gradient, linear-gradient(90deg, #9ebde0, #f08c3d)); }
 .demo-foot { margin-top: 10px; font-size: 0.78rem; color: var(--text-3); max-width: 62ch; }
 
 /* ---------------------------------------------------------------- shots */
@@ -313,11 +336,101 @@ p, li, figcaption, blockquote { overflow-wrap: break-word; }
 .section.alt { background: var(--bg-alt); border-block: 1px solid var(--hairline); }
 .section-lede { margin-top: 14px; color: var(--text-2); max-width: 62ch; font-size: 1.02rem; }
 
-.quote-grid {
-  display: grid; gap: 12px; margin-top: 32px;
-  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+/* ------------------------------------------------- the precedence ladder */
+
+.ladder-demo {
+  margin-top: 32px; padding: clamp(18px, 2.4vw, 26px);
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius);
 }
-@media (min-width: 900px) { .quote-grid { grid-template-columns: repeat(2, 1fr); } }
+.ladder-title { font-size: 1.02rem; margin: 0; }
+.ladder-lede {
+  margin: 8px 0 0; color: var(--text-2); font-size: 0.93rem;
+  line-height: 1.6; max-width: 68ch;
+}
+.ladder-body {
+  display: grid; gap: clamp(16px, 2.4vw, 26px); margin-top: 20px;
+  grid-template-columns: minmax(min(340px, 100%), 1.25fr) minmax(min(260px, 100%), 1fr);
+  align-items: start;
+}
+@media (max-width: 820px) {
+  /* Stacked, the outcome goes first. Below the ladder it would be off-screen
+     for anyone toggling the rows near the top, which is most of them — and a
+     control whose effect you cannot see is not much of a demonstration. */
+  .ladder-body { grid-template-columns: 1fr; }
+  .ladder-out { order: -1; }
+}
+
+.ladder-column { display: grid; gap: 7px; }
+/* The order is the whole idea, so it is stated at both ends rather than left
+   to be inferred from the paragraph above. */
+.ladder-edge {
+  margin: 0; font-size: 0.7rem; color: var(--text-3);
+  letter-spacing: 0.02em; padding-left: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.ladder-edge::after {
+  content: ''; flex: 1; height: 1px; background: var(--hairline);
+}
+.ladder { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.ladder-row label {
+  display: grid; align-items: baseline; gap: 3px 10px;
+  grid-template-columns: auto 1fr auto;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color 130ms ease, border-color 130ms ease;
+}
+.ladder-row label:hover { background: var(--surface-2); }
+.ladder-row input { margin: 0; accent-color: var(--accent); grid-column: 1; grid-row: 1; }
+.ladder-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ladder-main {
+  grid-column: 2; grid-row: 1;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px;
+}
+.ladder-name { font-size: 0.88rem; color: var(--text); font-weight: 500; }
+.ladder-says { font-size: 0.78rem; color: var(--text-2); }
+.ladder-note {
+  grid-column: 2 / -1; grid-row: 2;
+  font-size: 0.74rem; color: var(--text-3);
+}
+.ladder-wins {
+  grid-column: 3; grid-row: 1; justify-self: end;
+  font-size: 0.68rem; letter-spacing: 0.03em;
+  font-weight: 600; color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.ladder-wins:empty { display: none; }
+/* A layer that is switched off is still worth seeing — the ladder is the point,
+   not just the layers currently in it. */
+.ladder-row.is-off .ladder-name,
+.ladder-row.is-off .ladder-says,
+.ladder-row.is-off .ladder-note { opacity: 0.5; }
+.ladder-row.is-winning label { background: var(--surface-2); border-color: var(--accent-line); }
+
+/* The ladder is a fixed six rows, so centring the outcome beside it balances
+   the pair instead of leaving the right column hanging from the top. */
+.ladder-out { display: flex; flex-direction: column; gap: 12px; align-self: center; }
+@media (max-width: 820px) { .ladder-out { align-self: stretch; } }
+.ladder-result { display: flex; align-items: flex-start; gap: 12px; }
+.ladder-swatch {
+  width: 44px; height: 44px; border-radius: 9px; flex: none;
+  border: 1px solid var(--hairline-firm);
+  transition: background-color 220ms ease;
+}
+.ladder-facts { display: grid; gap: 3px; font-size: 0.8rem; }
+.ladder-facts > div { display: flex; gap: 8px; align-items: baseline; }
+.lf-what { color: var(--text-3); min-width: 68px; }
+.lf-value { color: var(--text); font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 0.76rem; }
+.lf-from { color: var(--text-2); }
+.ladder-say { border-left-color: var(--accent); }
+.ladder-say p { margin: 0; }
+.ladder-foot { margin: 0; font-size: 0.76rem; color: var(--text-3); line-height: 1.55; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ladder-row label, .ladder-swatch { transition: none; }
+}
+
 blockquote {
   margin: 0; padding: 16px 18px; border-radius: var(--radius-sm);
   background: var(--surface); border: 1px solid var(--hairline);
@@ -519,32 +632,179 @@ blockquote.warn { border-left-color: var(--warn); color: var(--text-2); }
   .demo-chart > .demo-head { order: 1; }
   .demo-chart > #curve { order: 2; }
   .demo-chart > .scrub-row { order: 3; }
+  /* Stacked, the rail's two halves belong in different places: the preview
+     next to the curve it illustrates, the actions after the list you edit. */
+  .demo-rail { display: contents; }
   .demo-preview { order: 4; margin-top: 4px; }
+  .demo-rail > .take-it { order: 7; margin-top: 0; }
   .demo-chart > .anchor-list { order: 5; }
+  /* These follow the list they belong to. Without an explicit order they take
+     0 and land above the chart, which is where they were until this was
+     noticed. */
+  .demo-chart > .editor-hint { order: 6; }
   .demo-chart > #curve-desc { order: 0; }
 }
-.demo-chart, .demo-preview { min-width: 0; }
+
+/* Wide enough for two columns, the editor's column grows far taller than the
+   preview's — up to three times, with a step open. Rather than leave a void,
+   the preview follows: while a warmth slider is being dragged, the thing it
+   changes stays on screen. */
+@media (min-width: 861px) {
+  .demo-rail {
+    position: sticky;
+    top: calc(58px + clamp(12px, 2vw, 24px));
+    align-self: start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Sticky is not motion, but it does move relative to the page; someone who
+     has asked for less of that is better served by it staying put. */
+  .demo-rail { position: static; }
+}
+.demo-chart, .demo-preview, .demo-rail { min-width: 0; }
 
 .anchor-list {
   list-style: none; margin: 14px 0 0; padding: 0;
-  display: grid; gap: 3px;
+  display: grid; gap: 2px;
   max-width: 460px;
 }
-.anchor-list li {
-  display: grid; align-items: baseline; gap: 10px;
-  grid-template-columns: 46px 1fr auto;
-  font-size: 0.79rem; padding: 2px 0;
+.anchor-row { border-radius: 7px; }
+.anchor-row.is-merged .a-time,
+.anchor-row.is-merged .a-name { opacity: 0.6; }
+
+/* The row is the summary and the control that opens the editor, so it has to
+   read as a line of a list and behave as a button. */
+.anchor-head {
+  width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: 0; cursor: pointer;
+  display: grid; align-items: baseline; gap: 4px 10px;
+  grid-template-columns: 46px 1fr auto 14px;
+  font-size: 0.79rem; padding: 5px 8px; border-radius: 7px;
+  transition: background-color 120ms ease;
 }
-.anchor-list .a-time {
+.anchor-head:hover { background: var(--surface-2); }
+.anchor-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.anchor-head[aria-expanded="true"] { background: var(--surface-2); }
+
+.anchor-head .a-time {
   color: var(--text-2); font-variant-numeric: tabular-nums;
   font-family: var(--mono); font-size: 0.74rem;
 }
-.anchor-list .a-name { color: var(--text); }
-.anchor-list .a-val {
+.anchor-head .a-name { color: var(--text); }
+.anchor-head .a-val {
   color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 0.74rem;
 }
-.anchor-list .a-note {
+.anchor-head .a-note {
   grid-column: 2 / -1; color: var(--text-3); font-size: 0.72rem; margin-top: -2px;
+}
+.anchor-head .a-note:empty { display: none; }
+
+.a-chevron {
+  grid-row: 1; grid-column: 4; align-self: center;
+  width: 8px; height: 8px; border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3); border-radius: 1px;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 160ms ease;
+}
+.anchor-head[aria-expanded="true"] .a-chevron {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+/* -------------------------------------------------- editing one step */
+
+.anchor-edit {
+  display: grid; gap: 11px;
+  padding: 12px 10px 14px; margin: 2px 0 6px;
+  background: var(--surface-2); border-radius: 8px;
+  border: 1px solid var(--hairline);
+}
+.edit-control {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline;
+  gap: 2px 10px;
+}
+.ec-label { font-size: 0.76rem; color: var(--text-2); }
+.ec-value {
+  font-size: 0.76rem; color: var(--text); font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+}
+.edit-control input[type="range"] { grid-column: 1 / -1; width: 100%; margin: 3px 0 0; }
+.ec-hint { grid-column: 1 / -1; font-size: 0.7rem; color: var(--text-3); }
+
+.edit-name { grid-template-columns: 1fr; gap: 4px; }
+.ec-text {
+  font: inherit; font-size: 0.8rem; color: var(--text);
+  background: var(--surface); border: 1px solid var(--hairline-firm, rgba(255,255,255,0.16));
+  border-radius: 6px; padding: 5px 8px; width: 100%;
+}
+.ec-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.edit-step-foot {
+  display: flex; justify-content: flex-end;
+  padding-top: 2px; margin-top: 1px;
+  border-top: 1px solid var(--hairline); padding-block-start: 11px;
+}
+.button.danger { color: var(--danger); }
+.button.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.anchor-add { margin-top: 6px; }
+.anchor-add .button { width: 100%; justify-content: center; }
+
+.demo-unavailable {
+  margin: 0; padding: 12px 14px; border-radius: 9px;
+  border: 1px solid var(--hairline-firm, rgba(255,255,255,0.16));
+  background: var(--surface-2); color: var(--text-2);
+  font-size: 0.82rem; line-height: 1.55; max-width: 62ch;
+}
+
+.editor-hint {
+  margin: 10px 0 0; font-size: 0.74rem; color: var(--text-3);
+  max-width: 44ch; line-height: 1.5;
+}
+
+/* The actions sit in the rail beside the preview rather than at the foot of a
+   column that is now nine hundred pixels tall — after building a schedule, the
+   way to keep it should not be somewhere you have to go looking. */
+.take-it {
+  display: flex; flex-direction: column; gap: 7px;
+  margin-top: 18px; padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+.take-note {
+  margin: 0; font-size: 0.74rem; line-height: 1.5; color: var(--text-3);
+}
+.take-note strong { color: var(--text-2); font-weight: 500; }
+.take-name { display: grid; gap: 3px; }
+.take-name .ec-label { font-size: 0.74rem; color: var(--text-3); }
+.editor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.editor-actions .button { flex: 1 1 auto; justify-content: center; }
+/* The download is the one that leads somewhere, so it carries a little weight
+   without competing with the page's own download button. */
+.button.primary-quiet {
+  border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft);
+}
+.button.primary-quiet:hover { background: color-mix(in srgb, var(--accent-soft) 60%, var(--accent-fill)); }
+.editor-note {
+  margin: 4px 0 0; font-size: 0.74rem; line-height: 1.5;
+  padding: 9px 11px; border-radius: 8px; border: 1px solid var(--hairline);
+  background: var(--surface-2); color: var(--text-2);
+}
+.editor-note.is-done { border-color: var(--accent); }
+.share-field { margin-top: 8px; font-size: 0.72rem; font-family: var(--mono); }
+.editor-note.is-problem { border-color: var(--warn); }
+.editor-note strong { color: var(--text); font-weight: 600; }
+
+/* A 30px row is comfortable with a mouse and mean with a thumb. */
+@media (pointer: coarse) {
+  .anchor-head { padding-top: 9px; padding-bottom: 9px; }
+  .edit-control input[type="range"] { height: 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a-chevron, .anchor-head { transition: none; }
 }
 
 /* ------------------------------------------------- the warmth preview */
@@ -595,6 +855,127 @@ blockquote.warn { border-left-color: var(--warn); color: var(--text-2); }
 }
 
 .curve-anchor.is-clamped { stroke: var(--accent); stroke-opacity: 0.4; }
+
+/* ------------------------------------------------------------- the year
+   A day tells you almost nothing about a sun-following schedule; a year tells
+   you everything. This is where the clamps and the polar cases become
+   visible, so it gets the full width. */
+
+.demo-year {
+  margin-top: 22px; padding-top: 20px;
+  border-top: 1px solid var(--hairline);
+}
+.year-head {
+  display: flex; flex-wrap: wrap; gap: 10px 20px;
+  align-items: baseline; justify-content: space-between; margin-bottom: 12px;
+}
+.year-readout { font-variant-numeric: tabular-nums; }
+
+#ribbon {
+  display: block; width: 100%; height: clamp(150px, 20vw, 220px);
+  border-radius: 8px; overflow: visible; cursor: ew-resize;
+  touch-action: pan-y; position: relative; z-index: 1;
+}
+/* Everything drawn on the field has to hold against amber at midnight and
+   near-white at noon, so these marks are fixed rather than themed — the field
+   underneath is the screen's colour and does not follow the page's theme. */
+:root {
+  --on-field:        rgba(18, 20, 26, 0.58);
+  --on-field-soft:   rgba(18, 20, 26, 0.16);
+  --on-field-firm:   rgba(18, 20, 26, 0.24);
+  --on-field-strong: rgba(15, 17, 22, 0.86);
+  --clamp-line:      #1f43b8;
+}
+#ribbon-field {
+  position: absolute; left: 0; width: 100%; display: block;
+  border-radius: 3px; z-index: 0;
+}
+/* Sunrise and sunset over a field that runs from warm amber to near-white, so
+   the line carries its own contrast rather than borrowing the ground's. */
+.ribbon-sun-halo {
+  fill: none; stroke: rgba(255, 255, 255, 0.55); stroke-width: 3.4;
+  stroke-linecap: round; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.ribbon-sun {
+  fill: none; stroke: rgba(20, 22, 28, 0.72); stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+/* Three states that must be told apart instantly: ordinary night, a sun that
+   never sets, and a sun that never rises. */
+/* White for a sun that never sets, deep blue for one that never rises. */
+.ribbon-polar-day   { fill: rgba(255, 255, 255, 0.46); }
+.ribbon-polar-night { fill: rgba(28, 40, 84, 0.46); }
+.ribbon-frame { fill: none; stroke: var(--on-field-firm); vector-effect: non-scaling-stroke; }
+.ribbon-anchor {
+  fill: none; stroke: var(--on-field); stroke-width: 1.3;
+  vector-effect: non-scaling-stroke;
+}
+.ribbon-anchor.is-clamped {
+  stroke: var(--clamp-line); stroke-opacity: 0.95; stroke-width: 2;
+}
+.ribbon-today {
+  stroke: var(--on-field); stroke-opacity: 0.5; stroke-width: 1;
+  stroke-dasharray: 3 3; vector-effect: non-scaling-stroke;
+}
+.ribbon-cursor {
+  stroke: var(--on-field-strong); stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+/* Labels sit in HTML above the stretched SVG so they keep their proportions at
+   every width. They never take the pointer — the drag belongs to the ribbon. */
+.ribbon-wrap { position: relative; }
+/* Above the SVG: a sunset line crossing the 18:00 mark must not strike through
+   the label, and the line stays readable either side of the chip. */
+.ribbon-hours, .ribbon-months { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.ribbon-hours span, .ribbon-months span {
+  position: absolute; font-size: 10px; line-height: 1.4; white-space: nowrap;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+}
+/* Hour marks lie over the bands, whose brightness swings from midnight to
+   noon, so they carry their own ground rather than relying on the band. */
+.ribbon-hours span {
+  left: 5px; transform: translateY(-100%); margin-top: -3px;
+  color: #f3f5f8; background: rgba(16, 18, 22, 0.74);
+  padding: 0 5px; border-radius: 999px;
+}
+.ribbon-months span { top: 90%; margin-top: 3px; margin-left: 4px; color: var(--text-3); }
+.ribbon-grid  { stroke: var(--on-field-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+.ribbon-legend {
+  list-style: none; margin: 10px 0 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  font-size: 0.75rem; color: var(--text-2);
+}
+.ribbon-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.key { width: 13px; height: 10px; border-radius: 3px; display: inline-block; }
+/* Both keys are filled from the engine at draw time so they cannot drift from
+   the field they describe; the values here are only a pre-paint fallback. */
+.key-field { background: linear-gradient(90deg, var(--key-warm, #a4744a), var(--key-neutral, #e4e4e4)); }
+.key-sun {
+  background: linear-gradient(180deg, #cdd4de 0 38%, rgba(20, 22, 28, 0.62) 38% 62%, #cdd4de 62%);
+}
+.key-clamp { background: var(--clamp-line); height: 3px; border-radius: 2px; }
+.key-polar-day { background: #f0f2f5; border: 1px solid var(--hairline-firm); }
+.key-polar-night { background: #1c2854; }
+
+
+.year-note {
+  margin: 10px 0 0; font-size: 0.8rem; color: var(--text-2);
+  min-height: 1.4em;
+}
+.year-note strong { color: var(--text); font-weight: 600; }
+.year-note .flag {
+  color: var(--accent); font-weight: 600;
+}
+
+/* A second scrubber needs to read as a sibling of the first, not a surprise. */
+#year-scrub { --track: var(--year-gradient, linear-gradient(90deg, #2a3350, #9ebde0, #2a3350)); }
+
+@media (prefers-color-scheme: light) {
+  .ribbon-night { fill: #dfe3ea; }
+}
 
 /* ------------------------------------------------------- scheme overrides
    These come last on purpose. `.hero-demo` sets `--moment-text` in its own
